@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
+import com.google.android.gms.location.LocationServices
 import com.yandex.mapkit.Animation
 import com.yandex.mapkit.MapKitFactory
 import com.yandex.mapkit.geometry.Point
@@ -136,6 +137,7 @@ fun MapScreen() {
 
     val targetPoint = Point(58.837566, 35.835812)
     AndroidView(
+
         factory = { context ->
             val mapView = MapView(context)
             // Дополнительная настройка MapView если нужно
@@ -148,11 +150,12 @@ fun MapScreen() {
                     Animation(Animation.Type.SMOOTH, 1f), // Добавляем анимацию
                     null
                 )
-                val imageProvider = ImageProvider.fromResource(mapView.context, R.drawable.placemark_icon)
-                mapView.mapWindow.map.mapObjects.addPlacemark().apply {
+                val imageProvider = ImageProvider.fromResource(mapView.context, R.drawable.empty_people2)
+                val placemark = mapView.mapWindow.map.mapObjects.addPlacemark().apply {
                     geometry = it
                     setIcon(imageProvider)
                 }
+                placemark.setIconStyle(IconStyle().apply { scale = 2f })
             }?: run {
                 // Если местоположение еще не получено, перемещаем карту к статической точке
                 mapView.mapWindow.getMap().move(
