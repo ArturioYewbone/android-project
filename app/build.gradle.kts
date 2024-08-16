@@ -66,6 +66,7 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
+    implementation("androidx.compose.material:material:1.4.3")
     implementation("io.coil-kt:coil-compose:2.1.0")
     implementation ("com.yandex.android:maps.mobile:4.6.1-full")
     implementation ("com.google.zxing:core:3.4.1")
