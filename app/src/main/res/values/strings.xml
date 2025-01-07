@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">diplom</string>
+    <string name="service_description">HCE Text Service</string>
+    <string name="aid_group_description">Example AID Group</string>
 </resources>

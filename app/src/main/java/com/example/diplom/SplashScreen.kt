@@ -33,6 +33,8 @@ class SplashActivity : ComponentActivity() {
             SplashScreen()
         }
     }
+
+
 }
 
 @Composable
@@ -40,7 +42,7 @@ fun SplashScreen() {
     val context = LocalContext.current
     // Задержка перед переходом к другой активности
     LaunchedEffect(Unit) {
-        delay(1) // Задержка в 2 секунды
+        delay(10) // Задержка в 2 секунды
         context.startActivity(Intent(context, LoginActivity::class.java))
         // Завершить текущую активность, чтобы пользователь не мог вернуться к SplashScreen
         (context as? ComponentActivity)?.finish()

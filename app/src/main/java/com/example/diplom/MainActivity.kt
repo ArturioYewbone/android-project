@@ -1,23 +1,29 @@
 package com.example.diplom
 
-import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.Manifest
 import android.app.Activity
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.ServiceConnection
 import android.content.pm.PackageManager
-import android.content.res.Resources
 import android.graphics.Bitmap
+import android.nfc.NfcAdapter
+import android.os.Build
+import android.os.IBinder
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.ImageCapture
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -49,15 +55,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
-import androidx.core.content.ContextCompat.startActivity
 import coil.compose.AsyncImage
-import com.google.android.gms.location.LocationServices
-import com.google.zxing.integration.android.IntentIntegrator
 import com.yandex.mapkit.Animation
 import com.yandex.mapkit.MapKitFactory
 import com.yandex.mapkit.geometry.Point
-import com.yandex.mapkit.location.LocationListener
-import com.yandex.mapkit.location.LocationStatus
 import com.yandex.mapkit.map.CameraPosition
 import com.yandex.mapkit.map.IconStyle
 import com.yandex.mapkit.map.MapObjectCollection
@@ -76,11 +77,40 @@ import kotlinx.coroutines.launch
 
 private lateinit var activityResultLauncher: ActivityResultLauncher<Intent>
 class MainActivity : ComponentActivity() {
+    private val internetCheckReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == "ACTION_CHECK_INTERNET_CONNECTION") {
+                val message = intent.getStringExtra("message") ?: "Please check your internet connection."
+                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+    private var aService: ActiveService? = null
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(className: ComponentName, service: IBinder) {
+            val binder = service as ActiveService.MyBinder
+            aService = binder.getService()
+        }
+
+        override fun onServiceDisconnected(arg0: ComponentName) {
+            aService = null
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        MapKitFactory.setApiKey("a48271b5-b501-406c-b9b2-98cce9c84a2c")
-        MapKitFactory.initialize(this)
+        Intent(this, ActiveService::class.java).also { intent ->
+            bindService(intent, connection, Context.BIND_AUTO_CREATE)
+        }
+//        val intent = Intent("TEST")
+        //intent.putExtra("string_array", "getApiForMap")
+        var t = aService?.sendToServer(arrayListOf("getApiForMap"))
+        Log.d(TAG, "ответ от серера в мэйне $t")
+        if (!isMapKitInitialized) {
+            MapKitFactory.setApiKey("a48271b5-b501-406c-b9b2-98cce9c84a2c")
+            MapKitFactory.initialize(this)
+            isMapKitInitialized = true
+        }
         activityResultLauncher = registerForActivityResult(
             ActivityResultContracts.StartActivityForResult()
         ) { result ->
@@ -89,21 +119,85 @@ class MainActivity : ComponentActivity() {
                 isScanningActive = true
             }
         }
-
+        nfcManager = NFCManager(this)
 //        mapView = MapView(this)
         setContent {
             MyApp(this)
         }
     }
+    companion object {
+        private var isMapKitInitialized = false
+    }
+    private lateinit var nfcManager: NFCManager
 
     override fun onStart() {
+
         super.onStart()
         MapKitFactory.getInstance().onStart()
     }
+    override fun onResume() {
+        super.onResume()
+        val filter = IntentFilter("ACTION_CHECK_INTERNET_CONNECTION")
+        registerReceiver(internetCheckReceiver, filter)
+        val intent = Intent(this, javaClass).apply {
+            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        }
+        nfcManager.nfcAdapter?.enableForegroundDispatch(
+            this,
+            PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT),
+            null,
+            null
+        )
+    }
+
+    override fun onPause() {
+        super.onPause()
+        unregisterReceiver(internetCheckReceiver)
+        nfcManager.nfcAdapter?.disableForegroundDispatch(this)
+    }
 
     override fun onStop() {
-        MapKitFactory.getInstance().onStop()
         super.onStop()
+        MapKitFactory.getInstance().onStop()
+        stopService(Intent(this, ActiveService::class.java))
+        Log.d("ddw", "onStop main activity")
+        val serviceIntent = Intent(this, BackgroundServiceLocation::class.java)
+        // Проверяем версию Android перед запуском сервиса
+        if (!BackgroundServiceLocation.isServiceRunning) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent)
+            } else {
+                startService(serviceIntent)
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        Log.d("ddw", "destroy main activity")
+        stopService(Intent(this, ActiveService::class.java))
+        MapKitFactory.getInstance().onStop()
+        val serviceIntent = Intent(this, BackgroundServiceLocation::class.java)
+        // Проверяем версию Android перед запуском сервиса
+        if (!BackgroundServiceLocation.isServiceRunning) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent)
+            } else {
+                startService(serviceIntent)
+            }
+        }
+        super.onDestroy()
+    }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // Убедитесь, что Intent относится к NFC
+        if (NfcAdapter.ACTION_NDEF_DISCOVERED == intent.action ||
+            NfcAdapter.ACTION_TECH_DISCOVERED == intent.action ||
+            NfcAdapter.ACTION_TAG_DISCOVERED == intent.action) {
+            // Обновляем Intent в Compose
+            setContent {
+                Scanner(nfcIntent = intent, context = this)
+            }
+        }
     }
 }
 
@@ -118,9 +212,9 @@ fun MyApp(context: Context) {
     ) { innerPadding ->
         Box(modifier = Modifier.padding(innerPadding)) {
             when (selectedTab) {
-                0 -> ProfileScreen()
+                0 -> ProfileScreen(context)
                 1 -> MapScreen()
-                2 -> QRScreen(context)
+                2 -> Scanner(null, context)
             }
         }
     }
@@ -145,7 +239,7 @@ fun BottomNavigationBar(selectedTab: Int, onTabSelected: (Int) -> Unit) {
             icon = { Icon(ImageVector.vectorResource(id = androidx.core.R.drawable.ic_call_decline), contentDescription = "Profile") },
             selected = selectedTab == 2,
             onClick = { onTabSelected(2) },
-            label = { Text("QRcod") }
+            label = { Text("Сканер") }
         )
     }
 }
@@ -155,20 +249,26 @@ fun MapScreen() {
     lateinit var mapObjectCollection: MapObjectCollection
     lateinit var placemarkMapObject: PlacemarkMapObject
     var userLocation by remember { mutableStateOf<Point?>(null) }
-// Запрашиваем местоположение
-    LaunchedEffect(key1 = true) {
-        val locationManager = MapKitFactory.getInstance().createLocationManager()
-        val locationListener = object : LocationListener {
-            override fun onLocationUpdated(location: com.yandex.mapkit.location.Location) {
-                userLocation = location.position
-            }
 
-            override fun onLocationStatusUpdated(locationStatus: LocationStatus) {
-                // Обработка обновления статуса местоположения
+    val context = LocalContext.current
+    // Создание и регистрация BroadcastReceiver
+    DisposableEffect(Unit) {
+        val locationReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                val latitude = intent?.getDoubleExtra("latitude", 0.0) ?: return
+                val longitude = intent.getDoubleExtra("longitude", 0.0)
+                userLocation = Point(latitude, longitude)
             }
         }
 
-        locationManager.requestSingleUpdate(locationListener)
+        // Регистрация приемника
+        val intentFilter = IntentFilter("LOCATION_UPDATE")
+        context.registerReceiver(locationReceiver, intentFilter)
+
+        // Возврат lambda-функции, которая будет вызвана при удалении эффекта
+        onDispose {
+            context.unregisterReceiver(locationReceiver)
+        }
     }
 
     val targetPoint = Point(58.837566, 35.835812)
@@ -231,7 +331,7 @@ fun MapScreen() {
 }
 
 @Composable
-fun QRScreen(context: Context) {
+fun Scanner(nfcIntent: Intent? = null, context: Context) {
     var selectedTab by remember { mutableStateOf("showQR") }
     var qrBitmap: Bitmap? = generateQRCode("1", 500) // Замените на код генерации вашего QR-кода
 
@@ -251,6 +351,17 @@ fun QRScreen(context: Context) {
         // Обработка результата сканирования QR-кода
     }
 
+    val nfcManager = remember { NFCManager(context as Activity) }
+    var nfcText by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(selectedTab, nfcIntent) {
+        if (selectedTab == "ScanNfc" && nfcIntent != null) {
+            nfcText = nfcManager.readNfcTag(nfcIntent)
+            if (nfcText == null) {
+                nfcText = "Не удалось прочитать текст с метки."
+            }
+        }
+    }
     Column {
         // Верхняя панель с кнопками
         Row(
@@ -260,10 +371,10 @@ fun QRScreen(context: Context) {
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Button(
-                onClick = { selectedTab = "showQR" },
-                enabled = selectedTab != "showQR"
+                onClick = { selectedTab = "ScanNFC" },
+                enabled = selectedTab != "ScanNFC"
             ) {
-                Text("Показать QR код")
+                Text("Отсканировать через NFC")
             }
             Button(
                 onClick = {
@@ -273,7 +384,7 @@ fun QRScreen(context: Context) {
                             context,
                             cameraPermission
                         ) == PackageManager.PERMISSION_GRANTED -> {
-                            selectedTab = "scan"
+                            selectedTab = "scanQR"
                         }
 
                         else -> {
@@ -281,28 +392,22 @@ fun QRScreen(context: Context) {
                         }
                     }
                 },
-                enabled = selectedTab != "scan"
+                enabled = selectedTab != "scanQR"
             ) {
-                Text("Отсканировать")
+                Text("Отсканировать QR код")
             }
         }
 
         // Содержимое в зависимости от выбранной вкладки
         Box(modifier = Modifier.fillMaxSize()) {
             when (selectedTab) {
-                "showQR" -> {
-                    qrBitmap?.let {
-                        Image(
-                            bitmap = it.asImageBitmap(),
-                            contentDescription = "QR Code",
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    } ?: Text(
-                        text = "QR код не найден",
+                "ScanNFC" -> {
+                    Text(
+                        text = nfcText ?: "Ожидание сканирования NFC метки...",
                         modifier = Modifier.align(Alignment.Center)
                     )
                 }
-                "scan" -> {
+                "scanQR" -> {
                     QRCodeScannerView(context, lifecycleOwner = lifecycleOwner)
                 }
             }
@@ -395,9 +500,10 @@ private fun stopScanning() {
 }
 
 @Composable
-fun ProfileScreen() {
+fun ProfileScreen(context: Context) {
     var hasPhoto by remember { mutableStateOf(false) }
     var showReviewsDialog by remember { mutableStateOf(false) }
+    var isFullScreenRepost by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -444,6 +550,20 @@ fun ProfileScreen() {
                     .padding(start = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                Row {
+                    IconButton(onClick = {
+                        isFullScreenRepost = true
+                    },
+                        modifier = Modifier.size(64.dp)
+                    ){
+                        Icon(
+                            painter = painterResource(id = R.drawable.placemark_icon),
+                            contentDescription = "Поделиться",
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+
+                }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.clickable {
@@ -493,9 +613,17 @@ fun ProfileScreen() {
         }
     }
 
+
     if (showReviewsDialog) {
         ReviewsDialog(onDismiss = { showReviewsDialog = false })
     }
+    if (isFullScreenRepost) {
+        val intent = Intent(context, ScreenRepost::class.java)
+        context.startActivity(intent)
+        isFullScreenRepost = false
+
+    }
+
 }
 @Composable
 fun ReviewItem(name: String, rating: Int, date: String, text: String) {
@@ -549,7 +677,6 @@ fun ReviewItem(name: String, rating: Int, date: String, text: String) {
         Text(text = text)
     }
 }
-
 @Composable
 fun ReviewsDialog(onDismiss: () -> Unit) {
     Dialog(onDismissRequest = onDismiss) {
@@ -585,3 +712,4 @@ fun ReviewsDialog(onDismiss: () -> Unit) {
         }
     }
 }
+

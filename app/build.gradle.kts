@@ -79,4 +79,13 @@ dependencies {
     implementation ("androidx.camera:camera-extensions:1.2.0")
 
     implementation ("com.google.mlkit:barcode-scanning:17.0.2")
+    implementation ("com.google.android.gms:play-services-location:21.0.1")
+
+
+    implementation ("androidx.work:work-runtime-ktx:2.8.0")
+    implementation ("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.5.2")
+
+    implementation ("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.6.0")
+    implementation ("com.google.code.gson:gson:2.8.8")
+
 }

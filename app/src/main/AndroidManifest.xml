@@ -6,7 +6,16 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.NFC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+
+
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
@@ -26,6 +35,7 @@
         <uses-library android:name="org.apache.http.legacy" android:required="false"/>
         <activity android:name=".MainActivity"></activity>
         <activity android:name=".ScannigProfile"></activity>
+        <activity android:name=".ScreenRepost"></activity>
         <activity
             android:name=".SplashActivity"
             android:exported="true"
@@ -38,6 +48,21 @@
             </intent-filter>
         </activity>
         <activity android:name=".LoginActivity"></activity>
+        <service android:name=".ActiveService"></service>
+        <service
+            android:name=".TextHostApduService"
+            android:permission="android.permission.BIND_NFC_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.nfc.cardemulation.action.HOST_APDU_SERVICE"/>
+            </intent-filter>
+            <meta-data
+                android:name="android.nfc.cardemulation.host_apdu_service"
+                android:resource="@xml/apduservice"/>
+        </service>
+        <service
+            android:name=".BackgroundServiceLocation"
+            android:foregroundServiceType="location"/>
     </application>
 
 </manifest>
