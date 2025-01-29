@@ -88,4 +88,9 @@ dependencies {
     implementation ("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.6.0")
     implementation ("com.google.code.gson:gson:2.8.8")
 
+    implementation ("androidx.lifecycle:lifecycle-livedata-ktx:2.5.1")  // или последнюю доступную версию
+    implementation ("androidx.lifecycle:lifecycle-viewmodel-ktx:2.5.1")
+
+    implementation ("com.google.android.material:material:1.9.0")
+
 }

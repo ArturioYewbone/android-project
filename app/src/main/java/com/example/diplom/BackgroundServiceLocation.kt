@@ -119,8 +119,8 @@ class BackgroundServiceLocation : Service() {
         }
     }
     private fun sendToServer() : Boolean{
-        val serverIp = "82.179.140.18"  // IP-адрес сервера
-        val serverPort = 44139          // Порт сервера
+        val serverIp = "192.168.0.59"  // IP-адрес сервера
+        val serverPort = 8080          // Порт сервера
         return try {
             Log.d(TAG, "open socket")
             val socket = Socket()

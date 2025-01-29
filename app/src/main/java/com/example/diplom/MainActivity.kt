@@ -73,27 +73,36 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.example.diplom.UImain.*
 
-
-private lateinit var activityResultLauncher: ActivityResultLauncher<Intent>
+lateinit var activityResultLauncher: ActivityResultLauncher<Intent>
+var userLocation: Point? = null
+private val TAG = "MainActivity"
+private var aService: ActiveService? = null
 class MainActivity : ComponentActivity() {
     private val internetCheckReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action == "ACTION_CHECK_INTERNET_CONNECTION") {
-                val message = intent.getStringExtra("message") ?: "Please check your internet connection."
-                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+            when(intent.action){
+                "ACTION_CHECK_INTERNET_CONNECTION" -> {
+                    val message = intent.getStringExtra("message") ?: "Please check your internet connection."
+                    Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                }
             }
         }
     }
-    private var aService: ActiveService? = null
+
+    private var isBound = false
+
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(className: ComponentName, service: IBinder) {
+            Log.d(TAG,"service connect")
             val binder = service as ActiveService.MyBinder
             aService = binder.getService()
         }
-
         override fun onServiceDisconnected(arg0: ComponentName) {
+            Log.d(TAG,"service disconnect")
             aService = null
+            isBound = false
         }
     }
 
@@ -104,12 +113,19 @@ class MainActivity : ComponentActivity() {
         }
 //        val intent = Intent("TEST")
         //intent.putExtra("string_array", "getApiForMap")
-        var t = aService?.sendToServer(arrayListOf("getApiForMap"))
-        Log.d(TAG, "ответ от серера в мэйне $t")
+        //var t = aService?.sendToServer(arrayListOf("getApiForMap"))
+        //var t = ""
+        //Log.d(TAG, "ответ от серера в мэйне $t")
+
         if (!isMapKitInitialized) {
             MapKitFactory.setApiKey("a48271b5-b501-406c-b9b2-98cce9c84a2c")
             MapKitFactory.initialize(this)
             isMapKitInitialized = true
+
+        }
+        val t = aService?.getLocation()
+        t?.let { userLocation = Point(it.latitude, it.longitude)
+            Log.d(TAG, "location received")
         }
         activityResultLauncher = registerForActivityResult(
             ActivityResultContracts.StartActivityForResult()
@@ -131,7 +147,6 @@ class MainActivity : ComponentActivity() {
     private lateinit var nfcManager: NFCManager
 
     override fun onStart() {
-
         super.onStart()
         MapKitFactory.getInstance().onStart()
     }
@@ -159,8 +174,11 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         MapKitFactory.getInstance().onStop()
-        stopService(Intent(this, ActiveService::class.java))
-        Log.d("ddw", "onStop main activity")
+        if (isBound) {
+            unbindService(connection)
+            isBound = false
+        }
+        Log.d(TAG, "onStop main activity")
         val serviceIntent = Intent(this, BackgroundServiceLocation::class.java)
         // Проверяем версию Android перед запуском сервиса
         if (!BackgroundServiceLocation.isServiceRunning) {
@@ -173,7 +191,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        Log.d("ddw", "destroy main activity")
+        Log.d(TAG, "destroy main activity")
         stopService(Intent(this, ActiveService::class.java))
         MapKitFactory.getInstance().onStop()
         val serviceIntent = Intent(this, BackgroundServiceLocation::class.java)
@@ -204,7 +222,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MyApp(context: Context) {
     var selectedTab by remember { mutableStateOf(0) }
-
+    if(aService == null){Log.d(TAG, "in method MyApp active service null")}
     Scaffold(
         bottomBar = {
             BottomNavigationBar(selectedTab = selectedTab, onTabSelected = { selectedTab = it })
@@ -213,7 +231,7 @@ fun MyApp(context: Context) {
         Box(modifier = Modifier.padding(innerPadding)) {
             when (selectedTab) {
                 0 -> ProfileScreen(context)
-                1 -> MapScreen()
+                1 -> MapScreen(aService, userLocation)
                 2 -> Scanner(null, context)
             }
         }
@@ -244,387 +262,6 @@ fun BottomNavigationBar(selectedTab: Int, onTabSelected: (Int) -> Unit) {
     }
 }
 
-@Composable
-fun MapScreen() {
-    lateinit var mapObjectCollection: MapObjectCollection
-    lateinit var placemarkMapObject: PlacemarkMapObject
-    var userLocation by remember { mutableStateOf<Point?>(null) }
-
-    val context = LocalContext.current
-    // Создание и регистрация BroadcastReceiver
-    DisposableEffect(Unit) {
-        val locationReceiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context?, intent: Intent?) {
-                val latitude = intent?.getDoubleExtra("latitude", 0.0) ?: return
-                val longitude = intent.getDoubleExtra("longitude", 0.0)
-                userLocation = Point(latitude, longitude)
-            }
-        }
-
-        // Регистрация приемника
-        val intentFilter = IntentFilter("LOCATION_UPDATE")
-        context.registerReceiver(locationReceiver, intentFilter)
-
-        // Возврат lambda-функции, которая будет вызвана при удалении эффекта
-        onDispose {
-            context.unregisterReceiver(locationReceiver)
-        }
-    }
-
-    val targetPoint = Point(58.837566, 35.835812)
-    AndroidView(
-
-        factory = { context ->
-            val mapView = MapView(context)
-            // Дополнительная настройка MapView если нужно
-            mapView },
-        modifier = Modifier.fillMaxSize(),
-        update = {mapView ->
-            val scope = CoroutineScope(Dispatchers.Main)
-            scope.launch {
-                while (userLocation == null) {
-                    delay(1000) // Wait for 1 second before checking again
-                }
-                userLocation?.let{
-                    // Once the location is found, update the map
-                    mapView.mapWindow.getMap().move(
-                        CameraPosition(it, 16.0f, 0.0f, 0.0f),
-                        Animation(Animation.Type.SMOOTH, 1f), // Add smooth animation
-                        null
-                    )
-                    val imageProvider = ImageProvider.fromResource(mapView.context, R.drawable.empty_people2)
-                    val placemark = mapView.mapWindow.map.mapObjects.addPlacemark().apply {
-                        geometry = it
-                        setIcon(imageProvider)
-                    }
-                    placemark.setIconStyle(IconStyle().apply { scale = 2f })
-                }
-            }
-            mapView.mapWindow.getMap().move(
-                CameraPosition(targetPoint, 14.0f, 0.0f, 0.0f),
-                Animation(Animation.Type.SMOOTH, 2f),
-                null
-            )
-//            userLocation?.let {
-//                mapView.mapWindow.getMap().move(
-//                    CameraPosition(it, 16.0f, 0.0f, 0.0f),
-//                    Animation(Animation.Type.SMOOTH, 1f), // Добавляем анимацию
-//                    null
-//                )
-//                val imageProvider = ImageProvider.fromResource(mapView.context, R.drawable.empty_people2)
-//                val placemark = mapView.mapWindow.map.mapObjects.addPlacemark().apply {
-//                    geometry = it
-//                    setIcon(imageProvider)
-//                }
-//                placemark.setIconStyle(IconStyle().apply { scale = 2f })
-//            }?: run {
-//                // Если местоположение еще не получено, перемещаем карту к статической точке
-//                mapView.mapWindow.getMap().move(
-//                    CameraPosition(targetPoint, 14.0f, 0.0f, 0.0f),
-//                    Animation(Animation.Type.SMOOTH, 2f),
-//                    null
-//                )
-//            }
-
-        }
-    )
-}
-
-@Composable
-fun Scanner(nfcIntent: Intent? = null, context: Context) {
-    var selectedTab by remember { mutableStateOf("showQR") }
-    var qrBitmap: Bitmap? = generateQRCode("1", 500) // Замените на код генерации вашего QR-кода
-
-    val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
-
-    val cameraPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted: Boolean ->
-        if (isGranted) {
-            selectedTab = "scan"
-        } else {
-            // Разрешение не предоставлено, можно показать сообщение или выполнить другие действия
-        }
-    }
-    val scanQRCodeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        // Обработка результата сканирования QR-кода
-    }
-
-    val nfcManager = remember { NFCManager(context as Activity) }
-    var nfcText by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(selectedTab, nfcIntent) {
-        if (selectedTab == "ScanNfc" && nfcIntent != null) {
-            nfcText = nfcManager.readNfcTag(nfcIntent)
-            if (nfcText == null) {
-                nfcText = "Не удалось прочитать текст с метки."
-            }
-        }
-    }
-    Column {
-        // Верхняя панель с кнопками
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Button(
-                onClick = { selectedTab = "ScanNFC" },
-                enabled = selectedTab != "ScanNFC"
-            ) {
-                Text("Отсканировать через NFC")
-            }
-            Button(
-                onClick = {
-                    val cameraPermission = Manifest.permission.CAMERA
-                    when {
-                        ContextCompat.checkSelfPermission(
-                            context,
-                            cameraPermission
-                        ) == PackageManager.PERMISSION_GRANTED -> {
-                            selectedTab = "scanQR"
-                        }
-
-                        else -> {
-                            cameraPermissionLauncher.launch(cameraPermission)
-                        }
-                    }
-                },
-                enabled = selectedTab != "scanQR"
-            ) {
-                Text("Отсканировать QR код")
-            }
-        }
-
-        // Содержимое в зависимости от выбранной вкладки
-        Box(modifier = Modifier.fillMaxSize()) {
-            when (selectedTab) {
-                "ScanNFC" -> {
-                    Text(
-                        text = nfcText ?: "Ожидание сканирования NFC метки...",
-                        modifier = Modifier.align(Alignment.Center)
-                    )
-                }
-                "scanQR" -> {
-                    QRCodeScannerView(context, lifecycleOwner = lifecycleOwner)
-                }
-            }
-        }
-    }
-}
-
-private var isScanningActive = true
-@Composable
-fun QRCodeScannerView(
-    context: Context,
-    lifecycleOwner: androidx.lifecycle.LifecycleOwner
-) {
-    val context = LocalContext.current
-    val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
-    val previewView = remember { PreviewView(context) }
-
-    LaunchedEffect(cameraProviderFuture) {
-        val cameraProvider = cameraProviderFuture.get()
-        val preview = Preview.Builder().build().also {
-            it.setSurfaceProvider(previewView.surfaceProvider)
-        }
-
-        val barcodeScanner: BarcodeScanner = BarcodeScanning.getClient()
-
-        val imageAnalysis = ImageAnalysis.Builder()
-            .build()
-            .also { analysis ->
-                analysis.setAnalyzer(ContextCompat.getMainExecutor(context)) { imageProxy ->
-                    val mediaImage = imageProxy.image
-                    if (mediaImage != null) {
-                        val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
-                        barcodeScanner.process(image)
-                            .addOnSuccessListener { barcodes ->
-                                for (barcode in barcodes) {
-                                    handleBarcode(context, barcode)
-                                    break
-                                }
-                            }
-                            .addOnCompleteListener {
-                                imageProxy.close()
-                            }
-                    } else {
-                        imageProxy.close()
-                    }
-                }
-            }
-
-        val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-
-        try {
-            cameraProvider.unbindAll()
-            cameraProvider.bindToLifecycle(
-                lifecycleOwner, cameraSelector, preview, imageAnalysis
-            )
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        AndroidView(factory = { previewView })
-    }
-}
-
-private fun handleBarcode(context: Context, barcode: Barcode) {
-    if (!isScanningActive) return
-    when (barcode.valueType) {
-        Barcode.TYPE_URL -> {
-            // Обработайте URL
-            Log.d("ddw", "URL scanning")
-        }
-        Barcode.TYPE_TEXT -> {
-            // Обработайте текст
-            val text = barcode.displayValue
-            Log.d("ddw", "$text")
-            stopScanning()
-            val intent = Intent(context, ScannigProfile::class.java).apply {
-                putExtra("text", text)
-            }
-            activityResultLauncher.launch(intent)
-        }
-        // Добавьте обработку других типов штрихкодов
-    }
-
-}
-
-private fun stopScanning() {
-    isScanningActive = false // Остановить анализ кадров
-}
-
-@Composable
-fun ProfileScreen(context: Context) {
-    var hasPhoto by remember { mutableStateOf(false) }
-    var showReviewsDialog by remember { mutableStateOf(false) }
-    var isFullScreenRepost by remember { mutableStateOf(false) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(240.dp)
-                    .weight(1f)
-                    .border(
-                        BorderStroke(2.dp, Color.Gray),
-                        shape = CircleShape
-                    )
-
-                    .clip(CircleShape)
-                    .clickable {
-                        // Загрузка фото
-                        hasPhoto = true
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                if (hasPhoto) {
-                    AsyncImage(
-                        model = "https://yandex-images.clstorage.net/100H3bC16/f85172BwRKm5/JPmvU9pjeoYluQ7XILd3e0EZNrsE_PIY98Vz9f4BvdadMwHvPVXfA1FBYtw3rwLo2EclQheCwoAKdbwh8SEtmQCNa2fbto_SBH26F1AnNo_wzba_dTnSqYZ1BmGbhHhjzTWnXQpS7LSyVqDrIGuXaA0S9NPmhrE222L8VgQUaduGmS7yz4CKZYJaP5chhFadkKgmncR5IvhyNHchvNXPxCslRE2a8vwHEZTTGpIZpdtsI7WGF2TgFB_Qv0RH1qnIFKnO058SmlWDeu6Gg6XEPqGI9102m5DKwteGUCy2rOS4RrYOGgAfBqB0kanCuTZo3EOEVVbFsYe_I4xWx5ZLSiWJDSHM4VtmA0p8FvAlx1wxm4cvBgmA2IB0RoOflIw0OGQXnorDraZjx7Bp4gh0-74TpcY3Z7JWTlOM5SeWemgkiW4SzLE4R1BoPicAFaV-g3sm34YpMAhiViWSPLbvBJsmRy4q4ewUo5di-BJbJbtO0Bb0J7bTt6xALCa3JSpZVcnswv_DybUzawy3E8WE3qFaVTz2OlP4ADelIu1GrJZZdRTPmlIdVLJWQ9sgGOY6_xBkVjXl8ha_kj5kRTaay2UrbINuMMtlYjncZdPFpJ3zC6SNhOuTmhBmNgEOJF6UuXZ3rIiiXkSBhyEI4-qnqP-AFDZnFpJ3HABt18R2CHnkK30wvKFYl3ML3bTCBXSMsQh3nMYqoSiDJUWQbQcfFhpGBm1aMp1WwOYhGZHrNfpMUtQHRMcChjzi7OQXxGi6tSvuQX4Q6ZXAyA40goRH7uHpd-2EmhC581RUge2WXDS7lmQOSlL9Z9MmYIlziEQorHOX9Gdn0_d8E55kRIQ6abTZPkIMI5mVMDoMlZN19b2w6Cb9Veky-6CEZNJ_l61UCibm3HsyLjYgdOHqkyiny-xCdwY1JvKVrmPvN7WmyAin293iXYNKpyAq_HaSFmfeM-nEvGdYAirxRfZhM", // URL фото
-                        contentDescription = "Profile Photo",
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    )
-                } else {
-                    Text("Загрузить фото", fontSize = 14.sp, color = Color.Gray)
-                }
-            }
-
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(start = 16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Row {
-                    IconButton(onClick = {
-                        isFullScreenRepost = true
-                    },
-                        modifier = Modifier.size(64.dp)
-                    ){
-                        Icon(
-                            painter = painterResource(id = R.drawable.placemark_icon),
-                            contentDescription = "Поделиться",
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
-
-                }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.clickable {
-                        showReviewsDialog = true
-                    }
-                ) {
-                    repeat(5) { index ->
-                        Icon(
-                            painter = painterResource(id = android.R.drawable.btn_star_big_off),
-                            contentDescription = "Rating Star",
-                            tint = Color.Gray,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Button(onClick = { /* TODO: Обработка нажатия */ }) {
-                    Text("Друзья")
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Button(onClick = { /* TODO: Обработка нажатия */ }) {
-                    Text("Рейтинг")
-                }
-            }
-        }
-
-        Text(
-            text = "Последние отзывы",
-            fontSize = 20.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(bottom = 16.dp)
-        )
-
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
-            items(5) {
-                ReviewItem(
-                    name = "Имя пользователя",
-                    rating = 4,
-                    date = "01.01.2024",
-                    text = "Это пример отзыва. Очень хороший отзыв."
-                )
-            }
-        }
-    }
-
-
-    if (showReviewsDialog) {
-        ReviewsDialog(onDismiss = { showReviewsDialog = false })
-    }
-    if (isFullScreenRepost) {
-        val intent = Intent(context, ScreenRepost::class.java)
-        context.startActivity(intent)
-        isFullScreenRepost = false
-
-    }
-
-}
 @Composable
 fun ReviewItem(name: String, rating: Int, date: String, text: String) {
     Column(
