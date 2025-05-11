@@ -30,19 +30,27 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Observer
+import androidx.lifecycle.lifecycleScope
 import androidx.work.WorkManager
 import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import com.google.gson.Gson
+import com.google.gson.annotations.SerializedName
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 import java.time.Duration
 private val TAG = "LoginActivity"
-private var activeService: ActiveService? = null
+var activeService: ActiveService? = null
+var viewModel: MyViewModel? = null
 private var isBound = false
-class LoginActivity : ComponentActivity() {
+private var loginUser:String = ""
 
+class LoginActivity : ComponentActivity() {
     private val connectionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             Log.d(TAG, "onReceive called with action: ${intent.action}")
@@ -53,11 +61,7 @@ class LoginActivity : ComponentActivity() {
                     // Например, можно обновить UI или перейти на другой экран
                     runOnUiThread{
                         setContent {
-                            WelcomeScreen(onLoginClick = {
-                                val intent = Intent(this@LoginActivity, MainActivity::class.java)
-                                startActivity(intent)
-                                finish()
-                            })
+                            WelcomeScreen()
                         }
                     }
                 }
@@ -106,19 +110,58 @@ class LoginActivity : ComponentActivity() {
     }
 
 
-
+    data class ServerResponse(
+        val message: String?,
+        val status: String?
+    )
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             val binder = service as ActiveService.MyBinder
             activeService = binder.getService()
             isBound = true
-            // Подписка на LiveData для получения ответа от сервиса
-            activeService?.commandResponse?.observe(this@LoginActivity, Observer { response ->
-                // Обработка ответа
-                Log.d(TAG, "Received response: $response")
-                // Можете обновить UI или выполнить другие действия
-                //Toast.makeText(this@LoginActivity, "Response: $response", Toast.LENGTH_SHORT).show()
-            })
+            lifecycleScope.launch {
+                activeService?.responseFlow?.collect { status ->
+                    Log.d(TAG, "Статус сервиса: $status")
+                    try {
+                        val jsonObject = JSONObject(status)
+                        val stat = jsonObject.getString("status")
+                        //val dataArray = jsonObject.getJSONArray("status")
+                        //val userData = dataArray.getJSONObject(0)
+                        //val state = userData.getString("status")
+                        Log.d(TAG, "stat-$stat")
+                        val serverResponse = Gson().fromJson(status, ServerResponse::class.java)
+                        if (stat == "error") {
+                            // Ошибка: показываем сообщение пользователю
+                            var errorMessage = serverResponse.message ?: ""
+                            Toast.makeText(
+                                this@LoginActivity,
+                                serverResponse.message,
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        } else if (stat == "success") {
+                            // Успешный вход или регистрация
+                            //Toast.makeText(this@LoginActivity, "Успех: ${serverResponse.message}", Toast.LENGTH_SHORT).show()
+                            activeService?.sendCommandFromActivity("SELECT user_id FROM myusers WHERE login = '$loginUser';", "")
+                            val intent = Intent(this@LoginActivity, MainActivity::class.java)
+
+                            startActivity(intent)
+                            finish() // Переход в основное приложение
+                            lifecycleScope.coroutineContext.cancelChildren()
+                        } else {
+                            // Неизвестный статус
+                            var errorMessage = "Неизвестный ответ от сервера"
+                            Toast.makeText(
+                                this@LoginActivity,
+                                "Неизвестный статус: ${serverResponse.status}",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Ошибка парсинга JSON: ${e.message}")
+                        var errorMessage = "Ошибка обработки ответа сервера"
+                    }
+                }
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -164,39 +207,21 @@ class LoginActivity : ComponentActivity() {
         val intent = Intent(this, ActiveService::class.java)
         stopService(intent)
     }
-    fun sendCommandToService() {
-        if (isBound) {
-            activeService?.sendCommandFromActivity("Hello from Activity!")
-        } else {
-            Log.e(TAG, "Service is not bound yet!")
-        }
-    }
 
     override fun onDestroy() {
         super.onDestroy()
-    }
 
-    private fun showLoginScreen() {
-        setContent {
-            WelcomeScreen(onLoginClick = {
-                val intent = Intent(this, MainActivity::class.java)
-                startActivity(intent)
-                finish()
-            })
-        }
     }
-
 }
 
 @Composable
-fun WelcomeScreen(onLoginClick: () -> Unit) {
+fun WelcomeScreen() {
     var isRegistering by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf("") }
-    var login by remember { mutableStateOf("df") }
-    var password by remember { mutableStateOf("df") }
+    var login by remember { mutableStateOf("login1") }
+    var password by remember { mutableStateOf("pas") }
     var confirmPassword by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf("") }
-
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
@@ -273,9 +298,15 @@ fun WelcomeScreen(onLoginClick: () -> Unit) {
                 } else {
                     errorMessage = "" // Сброс ошибки
                     if(isBound){
-                        activeService?.sendCommandFromActivity("login ${login} pass ${password}")
+                        if(isRegistering){
+                            activeService?.sendCommandFromActivity(
+                                    "INSERT INTO myusers (login, username, pass, last_login)\n" +
+                                    "VALUES ('${login}', '${name}', '${password}', CURRENT_TIMESTAMP);\n", "")
+                        }else{
+                            activeService?.sendCommandFromActivity("1${login} ${password}", "")
+                        }
+                        loginUser = login
                     }
-                    onLoginClick() // логика для кнопки
                 }
             },
             modifier = Modifier.padding(top = 16.dp)

@@ -15,6 +15,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.mutableStateOf
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import java.io.IOException
@@ -29,11 +30,17 @@ import java.io.PrintWriter
 import kotlinx.coroutines.*
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.LiveData
-import com.google.android.gms.location.FusedLocationProviderClient
-import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.*
 import com.yandex.mapkit.geometry.Point
+import org.json.JSONArray
+import androidx.compose.runtime.*
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import org.json.JSONObject
 
-class ActiveService : Service(), LocationListener {
+class ActiveService : Service() {
     private val TAG = "ActiveService"
     private lateinit var locationManager: LocationManager
     private var socket: Socket? = null
@@ -42,17 +49,21 @@ class ActiveService : Service(), LocationListener {
     private var inputStreamReader: InputStreamReader? = null
     private val serverIp = "192.168.0.59"  // Замените на ваш IP
     private val serverPort = 8080  // Замените на ваш порт
-    private var lastKnownLocation: Location? = null
+    private var lastKnownLocation: Point? = null
     private val executor = Executors.newSingleThreadScheduledExecutor()
     private val coroutineScope = CoroutineScope(Dispatchers.Default)
     private lateinit var fusedLocationClient: FusedLocationProviderClient
-    // LiveData для отправки ответа в активити
-    private val _commandResponse = MutableLiveData<String>()
-    val commandResponse: LiveData<String> get() = _commandResponse
+    private lateinit var locationCallback: LocationCallback
+
+    var idUser: Int = 0
+//    private val _response = MutableStateFlow("")
+//    val rresponse: StateFlow<String> = _response
+
+    private val _responseFlow = MutableSharedFlow<String>(replay = 1)
+    val responseFlow: SharedFlow<String> = _responseFlow
 
     // Свойство для привязки с активити
     private val binder = MyBinder()
-
     inner class MyBinder : Binder() {
         fun getService(): ActiveService = this@ActiveService
     }
@@ -60,7 +71,21 @@ class ActiveService : Service(), LocationListener {
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "Active service created")
+        // Инициализация FusedLocationProviderClient для получения местоположения
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+
+        // Инициализация LocationCallback для получения обновлений местоположения
+        locationCallback = object : LocationCallback() {
+            override fun onLocationResult(p0: LocationResult) {
+                p0.let {
+                    for (location in it.locations) {
+                        Log.d(TAG, "Location updated: ${location.latitude}, ${location.longitude}")
+                        lastKnownLocation = Point(location.latitude, location.longitude) // Сохраняем последнее местоположение
+                        sendLocationToServer() // Отправляем местоположение на сервер
+                    }
+                }
+            }
+        }
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 Log.d(TAG, "Attempting to open socket")
@@ -88,20 +113,13 @@ class ActiveService : Service(), LocationListener {
                 sendLocationToServer()
                 // Вы можете добавить другие команды, которые нужно отправить периодически
                 //sendCommandFromActivity("Some Command")
-            }, 0, 30, TimeUnit.SECONDS) // Интервал обновления: каждые 10 секунд
+            }, 0, 3000, TimeUnit.SECONDS) // Интервал обновления: каждые 10 секунд
         }
     }
 
-    // Публичный метод для отправки команд из активити
-    fun sendCommandFromActivity(command: String) {
-        coroutineScope.launch {
-            val response = sendToServer(command)
-            _commandResponse.postValue(response ?: "No response from server") // Отправляем ответ через LiveData
-            Log.d(TAG, "Response from server: $response")
-        }
-    }
+
     // Публичный метод для получения текущего местоположения
-    fun getLocation(): Location? {
+    fun getLocation(): Point? {
         // Проверка разрешений
         Log.d(TAG, "отправка локации в активити")
         if (ActivityCompat.checkSelfPermission(
@@ -110,13 +128,12 @@ class ActiveService : Service(), LocationListener {
             ) == PackageManager.PERMISSION_GRANTED
         ) {
             Log.d(TAG, "разрешения есть")
-            if(lastKnownLocation == null) {
-
-                // Получаем последнее известное местоположение
-                fusedLocationClient.lastLocation.addOnSuccessListener { location: Location? ->
-                    // Если местоположение найдено, сохраняем его в переменную
-                    lastKnownLocation = location
-                    Log.d(TAG, "Last known location: ${location?.latitude}, ${location?.longitude}")
+            fusedLocationClient.lastLocation.addOnSuccessListener { location ->
+                if (location != null) {
+                    lastKnownLocation = Point(location.latitude, location.longitude)
+                    Log.d(TAG, "Last known location: ${location.latitude}, ${location.longitude}")
+                } else {
+                    Log.d(TAG, "Location not available")
                 }
             }
             return lastKnownLocation
@@ -126,7 +143,16 @@ class ActiveService : Service(), LocationListener {
         }
     }
 
-    private suspend fun sendToServer(command: String): String? {
+    // Публичный метод для отправки команд из активити
+    fun sendCommandFromActivity(command: String, typeSql: String) {
+        coroutineScope.launch {
+            val response = sendToServer(command, typeSql)
+            _responseFlow.emit(response?:"")
+            //_response.value = response ?: ""
+            Log.d(TAG, "Response from server: $response")
+        }
+    }
+    private suspend fun sendToServer(command: String, typeSql: String): String? {
         return withContext(Dispatchers.IO) {
             try {
                 if(socket == null){Log.d(TAG, "socket null")}
@@ -139,16 +165,44 @@ class ActiveService : Service(), LocationListener {
                     inputStreamReader = InputStreamReader(socket!!.getInputStream())
                     bufferedReader = BufferedReader(inputStreamReader)
                 }
-                val gson = Gson()
-                val json = gson.toJson(command)
-                val printWriter = PrintWriter(outputStreamWriter, true)
-                printWriter.println(json)
-                Log.d(TAG, "JSON sent: $json")
+                var requestData = RequestData("sql", typeSql, command)
+                if(command[0] =='1'){
+                    val commandLogin = command.substring(1)
+                    requestData = RequestData("sql_login", typeSql, commandLogin)
+                }else if(command[0] == '2'){
+                    val commandLogin = command.substring(1)
+                    requestData = RequestData("sql_login", typeSql, commandLogin)
+                }
 
+
+                // Сериализуем объект в JSON с помощью Gson
+                val gson = Gson()
+                val json = gson.toJson(requestData)
+
+                // Отправляем JSON
+                outputStreamWriter?.write("$json\n")
+                outputStreamWriter?.flush()
+                Log.d(TAG, "JSON sent in sendToServer: $json")
                 val response = bufferedReader?.readLine()
                 Log.d(TAG, "Server response: $response")
+                if(command.startsWith("SELECT user_id" ) && !response.isNullOrEmpty()){
+                    try {
+                        // Преобразуем строку в JSON-массив
+                        val jsonObject = JSONObject(response)
+                        val dataArray = jsonObject.getJSONArray("data")
+                        // Берем первый объект из массива
+                        if (dataArray.length() > 0) {
+                            // Берем первый объект из массива
+                            val userData = dataArray.getJSONObject(0)
 
-
+                            // Извлекаем user_id и присваиваем переменной
+                            idUser = userData.getInt("user_id")
+                            Log.d(TAG, "Parsed user_id: $idUser")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error parsing user_id: ${e.message}")
+                    }
+                }
                 response
             } catch (e: Exception) {
                 Log.e(TAG, "Error sending command: ${e.message}")
@@ -156,71 +210,74 @@ class ActiveService : Service(), LocationListener {
             }
         }
     }
-
+    //CoroutineScope(Dispatchers.IO).launch {
     private fun sendLocationToServer() {
-        if (lastKnownLocation == null) {
-            // Если местоположение пустое, запросим его
-            try {
-                val locationProvider = LocationManager.GPS_PROVIDER
-                locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
-                if (ContextCompat.checkSelfPermission(
-                        this,
-                        android.Manifest.permission.ACCESS_FINE_LOCATION
-                    ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-                ) {
-                    // Получаем последнее известное местоположение
-                    lastKnownLocation = locationManager.getLastKnownLocation(locationProvider)
 
-                    // Запрашиваем обновление местоположения
-                    locationManager.requestSingleUpdate(locationProvider, object : LocationListener {
-                        override fun onLocationChanged(location: Location) {
-                            lastKnownLocation = location
-                            val data = "latitude=${location.latitude}&longitude=${location.longitude}"
-                            sendDataSafely(data, false)
-                            Log.d(TAG, "Location updated and sent: $data")
-                        }
-
-                        override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
-
-                        override fun onProviderEnabled(provider: String) {}
-
-                        override fun onProviderDisabled(provider: String) {}
-                    }, Looper.getMainLooper())
-                } else {
-                    Log.e(TAG, "Location permission not granted")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to request location: ${e.message}")
-            }
-        } else {
-            Log.d(TAG, "lastKnownLocation not null")
-            // Если местоположение уже известно, отправляем его
-            lastKnownLocation?.let {
-                val data = "latitude=${it.latitude}&longitude=${it.longitude}"
-                sendDataSafely(data, false)
-                Log.d(TAG, "Location sent: $data")
-            }
-        }
-    }
-
-
-    private fun sendDataSafely(data: String, isJson: Boolean) {
-        outputStreamWriter?.let {
-            synchronized(it) {
-                try {
-                    it.write("$data\n")
-                    it.flush()
-                } catch (e: Exception) {
-                    e.printStackTrace()
+        coroutineScope.launch {
+            if (ActivityCompat.checkSelfPermission(
+                    this@ActiveService,
+                    android.Manifest.permission.ACCESS_FINE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+            ) {
+                Log.d(TAG, "разрешения есть")
+                // Получаем последнее известное местоположение
+                fusedLocationClient.lastLocation.addOnSuccessListener { location: Location? ->
+                    // Если местоположение найдено, сохраняем его в переменную
+                    if (location != null) {
+                        lastKnownLocation = Point(location.latitude, location.longitude)
+                    }
+                    Log.d(TAG, "Last known location: ${location?.latitude}, ${location?.longitude}")
+                    val data = """
+                    UPDATE myusers
+                    SET latitude = ${location?.latitude},       
+                        longitude = ${location?.longitude},
+                        last_login = CURRENT_TIMESTAMP 
+                    WHERE user_id = $idUser;    
+                """.trimIndent()
+                    Log.d(TAG, data)
+                    sendDataSafely(data)
                 }
             }
         }
     }
+    data class RequestData(
+        val type: String,
+        val typeSql:String,
+        val command: String
+    )
+    private fun sendDataSafely(data: String) {
+        coroutineScope.launch {
+            outputStreamWriter?.let {
+                synchronized(it) {
+                    try {
 
+                        // Создаём объект с SQL запросом и данными
+                        val requestData = RequestData("sql", "", data)
+                        Log.d(TAG, requestData.toString())
+                        // Сериализуем объект в JSON с помощью Gson
+                        val gson = Gson()
+                        val json = gson.toJson(requestData)
+                        Log.d(TAG, json)
+                        // Отправляем JSON
+                        it.write("$json\n")
+                        it.flush()
+
+                        Log.d(TAG, "Sent JSON in sendDataSafely: $json")
+                        val response = bufferedReader?.readLine()
+                        Log.d(TAG, "Server response in sendDataSafely: $response")
+                    } catch (e: Exception) {
+                        Log.d(TAG, "Error in sendDataSafely\n${e.message}")
+                        e.printStackTrace()
+                        Log.e(TAG, "Error in sendDataSafely: ${e.message}", e)
+                    }
+                }
+            }
+        }
+
+    }
     override fun onBind(intent: Intent?): IBinder? {
         return binder
     }
-
     override fun onDestroy() {
         super.onDestroy()
         try {
@@ -229,16 +286,7 @@ class ActiveService : Service(), LocationListener {
             Log.e(TAG, "Failed to close socket: ${e.message}")
         }
         executor.shutdown()
+        fusedLocationClient.removeLocationUpdates(locationCallback)
         Log.d(TAG, "Service destroyed")
     }
-    override fun onLocationChanged(location: Location) {
-        Log.d(TAG, "Location changed: ${location.latitude}, ${location.longitude}")
-        lastKnownLocation = location
-    }
-
-    override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {    }
-
-    override fun onProviderEnabled(provider: String) {    }
-
-    override fun onProviderDisabled(provider: String) {}
 }

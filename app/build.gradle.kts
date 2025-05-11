@@ -59,6 +59,7 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+    implementation(libs.androidx.runtime.livedata)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
@@ -79,7 +80,7 @@ dependencies {
     implementation ("androidx.camera:camera-extensions:1.2.0")
 
     implementation ("com.google.mlkit:barcode-scanning:17.0.2")
-    implementation ("com.google.android.gms:play-services-location:21.0.1")
+    implementation ("com.google.android.gms:play-services-location:18.0.1")
 
 
     implementation ("androidx.work:work-runtime-ktx:2.8.0")
@@ -92,5 +93,8 @@ dependencies {
     implementation ("androidx.lifecycle:lifecycle-viewmodel-ktx:2.5.1")
 
     implementation ("com.google.android.material:material:1.9.0")
+
+    implementation ("androidx.lifecycle:lifecycle-runtime-compose:2.6.1")
+
 
 }

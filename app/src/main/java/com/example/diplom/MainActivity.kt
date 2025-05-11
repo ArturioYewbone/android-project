@@ -34,10 +34,12 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -55,6 +57,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import coil.compose.AsyncImage
 import com.yandex.mapkit.Animation
 import com.yandex.mapkit.MapKitFactory
@@ -74,12 +78,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.example.diplom.UImain.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 lateinit var activityResultLauncher: ActivityResultLauncher<Intent>
 var userLocation: Point? = null
 private val TAG = "MainActivity"
 private var aService: ActiveService? = null
+var serviceViewModel:MyViewModel?= null
 class MainActivity : ComponentActivity() {
+
     private val internetCheckReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when(intent.action){
@@ -98,6 +107,11 @@ class MainActivity : ComponentActivity() {
             Log.d(TAG,"service connect")
             val binder = service as ActiveService.MyBinder
             aService = binder.getService()
+            serviceViewModel = activeService?.let { MyViewModel(it) }
+            setContent {
+                MyApp(context = this@MainActivity)
+                //ProfileScreen(context = this@MainActivity, activeService = aService, serviceViewModel!!)
+            }
         }
         override fun onServiceDisconnected(arg0: ComponentName) {
             Log.d(TAG,"service disconnect")
@@ -111,11 +125,6 @@ class MainActivity : ComponentActivity() {
         Intent(this, ActiveService::class.java).also { intent ->
             bindService(intent, connection, Context.BIND_AUTO_CREATE)
         }
-//        val intent = Intent("TEST")
-        //intent.putExtra("string_array", "getApiForMap")
-        //var t = aService?.sendToServer(arrayListOf("getApiForMap"))
-        //var t = ""
-        //Log.d(TAG, "ответ от серера в мэйне $t")
 
         if (!isMapKitInitialized) {
             MapKitFactory.setApiKey("a48271b5-b501-406c-b9b2-98cce9c84a2c")
@@ -137,9 +146,6 @@ class MainActivity : ComponentActivity() {
         }
         nfcManager = NFCManager(this)
 //        mapView = MapView(this)
-        setContent {
-            MyApp(this)
-        }
     }
     companion object {
         private var isMapKitInitialized = false
@@ -230,8 +236,8 @@ fun MyApp(context: Context) {
     ) { innerPadding ->
         Box(modifier = Modifier.padding(innerPadding)) {
             when (selectedTab) {
-                0 -> ProfileScreen(context)
-                1 -> MapScreen(aService, userLocation)
+                0 -> ProfileScreen(context, aService, serviceViewModel!!)
+                1 -> MapScreen(context, aService!!, serviceViewModel!!)
                 2 -> Scanner(null, context)
             }
         }
@@ -312,41 +318,6 @@ fun ReviewItem(name: String, rating: Int, date: String, text: String) {
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(text = text)
-    }
-}
-@Composable
-fun ReviewsDialog(onDismiss: () -> Unit) {
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = Color.White,
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.9f)
-                .padding(16.dp)
-        ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                Text(
-                    text = "Все отзывы",
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(bottom = 16.dp)
-                )
-
-                // Здесь можно добавить фильтры
-
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    items(20) {
-                        ReviewItem(
-                            name = "Имя пользователя",
-                            rating = 4,
-                            date = "01.01.2024",
-                            text = "Это пример отзыва. Очень хороший отзыв."
-                        )
-                    }
-                }
-            }
-        }
     }
 }
 
