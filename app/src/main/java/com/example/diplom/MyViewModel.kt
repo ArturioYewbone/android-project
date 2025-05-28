@@ -1,25 +1,20 @@
 package com.example.diplom
 
 import android.util.Log
-import androidx.compose.runtime.*
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.cache
 import kotlinx.coroutines.launch
 import org.json.JSONObject
-import java.sql.Time
-import java.time.LocalDate
 
 data class Review(
     val reviewer_name: String,
     val rating: Int,
     val review: String?,
-    val review_date: String
+    val review_date: String,
 )
 data class InfoPeopleOnMap(
     val username: String,
@@ -40,8 +35,13 @@ class MyViewModel(private val activeService: ActiveService) : ViewModel() {
     val reviewsFlow: StateFlow<List<Review>> = _reviewsFlow
     private val _reviewsFlow5 = MutableStateFlow<List<Review>>(emptyList())
     val reviewsFlow5: StateFlow<List<Review>> = _reviewsFlow5
+    private val _reviewsFlow5From = MutableStateFlow<List<Review>>(emptyList())
+    val reviewsFlow5From: StateFlow<List<Review>> = _reviewsFlow5From
     private val _infoPeopleOnMap = MutableStateFlow<List<InfoPeopleOnMap>>(emptyList())
     val infoPeopleOnMap: StateFlow<List<InfoPeopleOnMap>> = _infoPeopleOnMap
+
+    private val _avgRating = MutableStateFlow<Float>(0f)
+    val avgRating: StateFlow<Float> = _avgRating
     // Состояние загрузки
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading
@@ -114,8 +114,9 @@ class MyViewModel(private val activeService: ActiveService) : ViewModel() {
         """.trimIndent()
         sendCommand(cmd, "send_review")
     }
+
     fun sendCommand(command: String, typeSQL: String) {
-        activeService.sendCommandFromActivity(command, typeSQL)
+        activeService.sendCommandFromActivity(command, typeSQL, null)
     }
     private var isSubscribed = false
 
@@ -142,11 +143,23 @@ class MyViewModel(private val activeService: ActiveService) : ViewModel() {
                         "review_five"->{
                             val listType = object : TypeToken<List<Review>>() {}.type
                             val reviews: List<Review> = Gson().fromJson(data.toString(), listType)
-                            if (reviews.isNotEmpty()) {
+                            if (reviews.isEmpty()) {
                                 Log.d(TAG, "No reviews found.")
-                                _reviewsFlow5.value = reviews
-                            }else{
                                 _reviewsFlow5.value = emptyList()
+
+                            }else{
+                                _reviewsFlow5.value = reviews
+                            }
+                        }
+                        "review_five_from"->{
+                            val listType = object : TypeToken<List<Review>>() {}.type
+                            val reviews: List<Review> = Gson().fromJson(data.toString(), listType)
+                            if (reviews.isEmpty()) {
+                                Log.d(TAG, "No reviews found.")
+                                _reviewsFlow5From.value = emptyList()
+                            }else{
+                                _reviewsFlow5From.value = reviews
+
                             }
                         }
                         "allReviews"->{
@@ -186,6 +199,10 @@ class MyViewModel(private val activeService: ActiveService) : ViewModel() {
 //                            _infoAboutUser.value = reviews
                             //Log.d(TAG, "получено в виде списка: $reviews")
 
+                        }
+                        "avg_rating"->{
+                            val avg = data.getJSONObject(0).getDouble("average_rating").toFloat()
+                            _avgRating.value = avg
                         }
                     }
                 } catch (e: Exception) {

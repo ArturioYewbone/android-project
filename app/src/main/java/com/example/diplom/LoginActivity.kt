@@ -29,21 +29,13 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.Observer
 import androidx.lifecycle.lifecycleScope
-import androidx.work.WorkManager
-import androidx.work.Constraints
-import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
 import com.google.gson.Gson
-import com.google.gson.annotations.SerializedName
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import org.json.JSONObject
-import java.time.Duration
+
 private val TAG = "LoginActivity"
 var activeService: ActiveService? = null
 var viewModel: MyViewModel? = null
@@ -141,7 +133,7 @@ class LoginActivity : ComponentActivity() {
                         } else if (stat == "success") {
                             // Успешный вход или регистрация
                             //Toast.makeText(this@LoginActivity, "Успех: ${serverResponse.message}", Toast.LENGTH_SHORT).show()
-                            activeService?.sendCommandFromActivity("SELECT user_id FROM myusers WHERE login = '$loginUser';", "")
+                            activeService?.sendCommandFromActivity("SELECT user_id FROM myusers WHERE login = '$loginUser';", "", null)
                             val intent = Intent(this@LoginActivity, MainActivity::class.java)
 
                             startActivity(intent)
@@ -300,10 +292,10 @@ fun WelcomeScreen() {
                     if(isBound){
                         if(isRegistering){
                             activeService?.sendCommandFromActivity(
-                                    "INSERT INTO myusers (login, username, pass, last_login)\n" +
-                                    "VALUES ('${login}', '${name}', '${password}', CURRENT_TIMESTAMP);\n", "")
+                                    "INSERT INTO myusers (login, username, pass, last_login) " +
+                                    "VALUES ('${login}', '${name}', '${password}', CURRENT_TIMESTAMP);", "", null)
                         }else{
-                            activeService?.sendCommandFromActivity("1${login} ${password}", "")
+                            activeService?.sendCommandFromActivity("1${login} ${password}", "", null)
                         }
                         loginUser = login
                     }

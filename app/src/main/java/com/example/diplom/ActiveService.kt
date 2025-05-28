@@ -1,23 +1,14 @@
 package com.example.diplom
 
 import android.app.Service
-import android.content.BroadcastReceiver
-import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.location.Location
-import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Binder
-import android.os.Bundle
 import android.os.IBinder
-import android.os.Looper
 import android.util.Log
-import androidx.activity.compose.setContent
-import androidx.compose.runtime.mutableStateOf
 import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
 import java.io.IOException
 import java.io.OutputStreamWriter
 import java.net.Socket
@@ -26,19 +17,17 @@ import java.util.concurrent.TimeUnit
 import com.google.gson.Gson
 import java.io.BufferedReader
 import java.io.InputStreamReader
-import java.io.PrintWriter
 import kotlinx.coroutines.*
-import androidx.lifecycle.MutableLiveData
-import androidx.lifecycle.LiveData
 import com.google.android.gms.location.*
 import com.yandex.mapkit.geometry.Point
-import org.json.JSONArray
 import androidx.compose.runtime.*
+import com.example.diplom.UImain.UploadAvatarRequest
+import com.google.gson.GsonBuilder
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONObject
+import java.io.DataInputStream
+import java.io.DataOutputStream
 
 class ActiveService : Service() {
     private val TAG = "ActiveService"
@@ -47,8 +36,11 @@ class ActiveService : Service() {
     private var outputStreamWriter: OutputStreamWriter? = null
     private var bufferedReader: BufferedReader? = null
     private var inputStreamReader: InputStreamReader? = null
-    private val serverIp = "192.168.0.59"  // Замените на ваш IP
-    private val serverPort = 8080  // Замените на ваш порт
+
+    private var dataOut: DataOutputStream? = null
+    private var dataIn: DataInputStream? = null
+    private val serverIp = "82.179.140.18"  // Замените на ваш IP
+    private val serverPort = 44021  // Замените на ваш порт
     private var lastKnownLocation: Point? = null
     private val executor = Executors.newSingleThreadScheduledExecutor()
     private val coroutineScope = CoroutineScope(Dispatchers.Default)
@@ -56,6 +48,7 @@ class ActiveService : Service() {
     private lateinit var locationCallback: LocationCallback
 
     var idUser: Int = 0
+
 //    private val _response = MutableStateFlow("")
 //    val rresponse: StateFlow<String> = _response
 
@@ -94,6 +87,10 @@ class ActiveService : Service() {
                 outputStreamWriter = OutputStreamWriter(socket!!.getOutputStream())
                 inputStreamReader = InputStreamReader(socket!!.getInputStream())
                 bufferedReader = BufferedReader(inputStreamReader)
+                val os = socket!!.getOutputStream()
+                val is_ = socket!!.getInputStream()
+                dataOut = DataOutputStream(os)
+                dataIn  = DataInputStream(is_)
                 val intent = Intent("ACTION_CONNECTION_SUCCESS")
                 sendBroadcast(intent)
             } catch (e: IOException) {
@@ -144,15 +141,26 @@ class ActiveService : Service() {
     }
 
     // Публичный метод для отправки команд из активити
-    fun sendCommandFromActivity(command: String, typeSql: String) {
+    fun sendCommandFromActivity(command: String, typeSql: String, avatar: ByteArray?) {
         coroutineScope.launch {
-            val response = sendToServer(command, typeSql)
+            val response = sendToServer(command, typeSql, avatar = avatar)
             _responseFlow.emit(response?:"")
             //_response.value = response ?: ""
-            Log.d(TAG, "Response from server: $response")
+            //Log.d(TAG, "Response from server: $response")
         }
     }
-    private suspend fun sendToServer(command: String, typeSql: String): String? {
+    fun sendingAvatar(avatar: UploadAvatarRequest){
+        val json = GsonBuilder()
+            .disableHtmlEscaping()    // чтобы не было \u003d вместо '='
+            .create()
+            .toJson(avatar)
+        outputStreamWriter?.apply {
+            write(json)
+            write("\n")
+            flush()
+        }
+    }
+    private suspend fun sendToServer(command: String, typeSql: String, avatar:ByteArray?): String? {
         return withContext(Dispatchers.IO) {
             try {
                 if(socket == null){Log.d(TAG, "socket null")}
@@ -161,9 +169,42 @@ class ActiveService : Service() {
                     Log.e(TAG, "Socket is closed or null, reopening...")
                     // Переоткрытие сокета
                     socket = Socket(serverIp, serverPort)
-                    outputStreamWriter = OutputStreamWriter(socket!!.getOutputStream())
-                    inputStreamReader = InputStreamReader(socket!!.getInputStream())
+                    val os = socket!!.getOutputStream()
+                    val is_ = socket!!.getInputStream()
+                    outputStreamWriter = OutputStreamWriter(os)
+                    inputStreamReader = InputStreamReader(is_)
                     bufferedReader = BufferedReader(inputStreamReader)
+
+                    dataOut = DataOutputStream(os)
+                    dataIn  = DataInputStream(is_)
+                }
+                if (typeSql=="send_avatar"){
+                    // 1) Формируем JSON-заголовок
+                    Log.d(TAG, "send photo")
+                    val headerJson = JSONObject().apply {
+                        put("type", "upload_avatar")
+                        put("user_id", idUser)          // ваш идентификатор
+                        put("size", avatar!!.size)         // длина полезных байт
+                    }.toString()
+                    Log.d(TAG, "header complite")
+
+                    val headerBytes = headerJson.toByteArray(Charsets.UTF_8)
+
+                    // 2) Шлём: [4-байта длина JSON][JSON UTF-8][raw-bytes]
+                    dataOut!!.apply {
+                        writeInt(headerBytes.size)
+                        write(headerBytes)
+                        write(avatar)
+                        flush()
+                    }
+                    Log.d(TAG, "Sending compite")
+
+                    // 3) Читаем ответ: сначала 4-байта длина, потом JSON
+                    val respLen = dataIn!!.readInt()
+                    val respBuf = ByteArray(respLen)
+                    dataIn!!.readFully(respBuf)
+                    Log.d(TAG, "response - ${respBuf}")
+                    return@withContext String(respBuf, Charsets.UTF_8)
                 }
                 var requestData = RequestData("sql", typeSql, command)
                 if(command[0] =='1'){
@@ -174,16 +215,27 @@ class ActiveService : Service() {
                     requestData = RequestData("sql_login", typeSql, commandLogin)
                 }
 
-
+                val jsonStr = GsonBuilder().disableHtmlEscaping().create().toJson(requestData)
+                val jsonBytes = jsonStr.toByteArray(Charsets.UTF_8)
+                //Log.d(TAG, "JSON complite: $jsonStr")
+                // 2) Шлём: [4-байта длина JSON][JSON UTF-8]
+                dataOut!!.writeInt(jsonBytes.size)
+                dataOut!!.write(jsonBytes)
+                dataOut!!.flush()
                 // Сериализуем объект в JSON с помощью Gson
-                val gson = Gson()
-                val json = gson.toJson(requestData)
-
-                // Отправляем JSON
-                outputStreamWriter?.write("$json\n")
-                outputStreamWriter?.flush()
-                Log.d(TAG, "JSON sent in sendToServer: $json")
-                val response = bufferedReader?.readLine()
+//                val gson = Gson()
+//                val json = gson.toJson(requestData)
+//
+//                // Отправляем JSON
+//                outputStreamWriter?.write("$json\n")
+//                outputStreamWriter?.flush()
+                Log.d(TAG, "JSON sent in sendToServer: $jsonStr")
+                // 3) Читаем ответ: [4-байта длина][JSON UTF-8]
+                val respLen = dataIn!!.readInt()
+                val respBuf = ByteArray(respLen)
+                dataIn!!.readFully(respBuf)
+                val response = String(respBuf, Charsets.UTF_8)
+                //val response = bufferedReader?.readLine()
                 Log.d(TAG, "Server response: $response")
                 if(command.startsWith("SELECT user_id" ) && !response.isNullOrEmpty()){
                     try {
@@ -198,6 +250,7 @@ class ActiveService : Service() {
                             // Извлекаем user_id и присваиваем переменной
                             idUser = userData.getInt("user_id")
                             Log.d(TAG, "Parsed user_id: $idUser")
+                            sendLocationToServer()
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "Error parsing user_id: ${e.message}")
@@ -212,7 +265,7 @@ class ActiveService : Service() {
     }
     //CoroutineScope(Dispatchers.IO).launch {
     private fun sendLocationToServer() {
-
+        if(idUser == 0){return}
         coroutineScope.launch {
             if (ActivityCompat.checkSelfPermission(
                     this@ActiveService,
@@ -240,6 +293,11 @@ class ActiveService : Service() {
             }
         }
     }
+    data class UploadAvatarRequest(
+        val command: String = "upload_avatar",
+        val userId: Int,
+        val avatarBase64: String
+    )
     data class RequestData(
         val type: String,
         val typeSql:String,
@@ -247,7 +305,7 @@ class ActiveService : Service() {
     )
     private fun sendDataSafely(data: String) {
         coroutineScope.launch {
-            outputStreamWriter?.let {
+            dataOut?.let {
                 synchronized(it) {
                     try {
 
@@ -255,15 +313,27 @@ class ActiveService : Service() {
                         val requestData = RequestData("sql", "", data)
                         Log.d(TAG, requestData.toString())
                         // Сериализуем объект в JSON с помощью Gson
-                        val gson = Gson()
-                        val json = gson.toJson(requestData)
-                        Log.d(TAG, json)
-                        // Отправляем JSON
-                        it.write("$json\n")
-                        it.flush()
+                        val jsonStr = GsonBuilder().disableHtmlEscaping().create().toJson(requestData)
+                        val jsonBytes = jsonStr.toByteArray(Charsets.UTF_8)
+                        //Log.d(TAG, "JSON complite: $jsonStr")
+                        // 2) Шлём: [4-байта длина JSON][JSON UTF-8]
+                        dataOut!!.writeInt(jsonBytes.size)
+                        dataOut!!.write(jsonBytes)
+                        dataOut!!.flush()
 
-                        Log.d(TAG, "Sent JSON in sendDataSafely: $json")
-                        val response = bufferedReader?.readLine()
+//                        val gson = Gson()
+//                        val json = gson.toJson(requestData)
+//                        Log.d(TAG, json)
+//                        // Отправляем JSON
+//                        it.write("$json\n")
+//                        it.flush()
+
+                        Log.d(TAG, "Sent JSON in sendDataSafely: $jsonStr")
+                        //val response = bufferedReader?.readLine()
+                        val respLen = dataIn!!.readInt()
+                        val respBuf = ByteArray(respLen)
+                        dataIn!!.readFully(respBuf)
+                        val response = String(respBuf, Charsets.UTF_8)
                         Log.d(TAG, "Server response in sendDataSafely: $response")
                     } catch (e: Exception) {
                         Log.d(TAG, "Error in sendDataSafely\n${e.message}")

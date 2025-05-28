@@ -1,0 +1,238 @@
+#include <iostream>
+#include <cstring>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <chrono>
+#include <iomanip>
+#include <nlohmann/json.hpp>
+#include "libpq-fe.h"
+//g++ -std=c++11 -g -Wall -I/usr/local/include/pgsql -I/home/mpi/pin2106/SorokinEvgeny/libs -o server server.cpp -lpq -lcurl
+
+using json = nlohmann::json;
+#define PORT 44021
+
+// Функция для получения текущего времени в формате HH:MM:SS
+std::string getCurrentTime() {
+    auto now = std::chrono::system_clock::now();
+    auto now_time_t = std::chrono::system_clock::to_time_t(now);
+    std::tm tm = *std::localtime(&now_time_t);
+
+    std::ostringstream oss;
+    oss << std::put_time(&tm, "%H:%M:%S");
+    return oss.str();
+}
+
+// Метод для выполнения SQL-запроса и получения результатов
+json executeSQLQuery(const std::string& query, bool isLogin, const std::string& typeSQL) {
+    PGconn *conn = PQconnectdb("user=mpi password=135a1 host=povt-cluster.tstu.tver.ru port=5432 dbname=p21_06_iss");
+    if (PQstatus(conn) != CONNECTION_OK) {
+        std::cerr << "Ошибка подключения к базе данных: " << PQerrorMessage(conn) << std::endl;
+        PQfinish(conn);
+        return {{"typeSQL", typeSQL}, {"status", "error"}, {"message", "Ошибка подключения к базе данных"}};
+    }
+
+    json result_json;
+
+    if (isLogin) {
+        // Разделение запроса на логин и пароль
+        size_t delimiter_pos = query.find(" ");
+        if (delimiter_pos == std::string::npos) {
+            result_json["typeSQL"] = typeSQL;
+            result_json["status"] = "error";
+            result_json["message"] = "Неверный формат запроса. Требуется логин и пароль.";
+            PQfinish(conn);
+            return result_json;
+        }
+
+        std::string login = query.substr(0, delimiter_pos);
+        std::string password = query.substr(delimiter_pos + 1);
+        std::cout << "login:" << login << " pas:" << password <<"\n";
+        login = PQescapeLiteral(conn, login.c_str(), login.length());
+        password = PQescapeLiteral(conn, password.c_str(), password.length());
+        // Формируем запрос для поиска логина
+        std::string login_query = "SELECT pass FROM myusers WHERE login = " + login;
+
+        PGresult *res = PQexec(conn, login_query.c_str());
+
+        if (PQresultStatus(res) != PGRES_TUPLES_OK) {
+            std::cerr << "Ошибка выполнения SQL-запроса: " << PQerrorMessage(conn) << std::endl;
+            PQclear(res);
+            PQfinish(conn);
+            return {{"status", "error"}, {"message", "Ошибка выполнения запроса логина"}};
+        }
+
+        int rows = PQntuples(res);
+
+        if (rows == 0) {
+            // Логин не найден
+            result_json["typeSQL"] = typeSQL;
+            result_json["status"] = "error";
+            result_json["message"] = "Логин не найден";
+        } else if (rows == 1) {
+      // Логин найден, проверяем пароль
+            std::string stored_password = PQgetvalue(res, 0, 0);  // Пароль из базы данных
+        //     std::cout << "stored_password: [" << stored_password << "] (length: " << stored_password.length() << ") "
+        //   << "password: [" << password << "] (length: " << password.length() << ")\n";
+
+            if ("'"+ stored_password +"'" == password) {
+                result_json["typeSQL"] = typeSQL;
+                result_json["status"] = "success";
+                result_json["message"] = "Пароль верный";
+            } else {
+                result_json["typeSQL"] = typeSQL;
+                result_json["status"] = "error";
+                result_json["message"] = "Неверный пароль";
+            }
+        } else {
+            result_json["typeSQL"] = typeSQL;
+            result_json["status"] = "error";
+            result_json["message"] = "Ошибка: найдено более одного пользователя с таким логином";
+        }
+
+        PQclear(res);
+    } else {
+        // Выполнение обычного SQL-запроса
+        PGresult *res = PQexec(conn, query.c_str());
+
+        if (PQresultStatus(res) != PGRES_TUPLES_OK && PQresultStatus(res) != PGRES_COMMAND_OK) {
+            std::string error_msg = PQerrorMessage(conn);
+            std::cerr << "Ошибка выполнения SQL-запроса: " << error_msg << std::endl;
+            PQclear(res);
+            PQfinish(conn);
+            if (error_msg.find("duplicate key value violates unique constraint") != std::string::npos) {
+                return {{"typeSQL", typeSQL}, {"status", "error"}, {"message", "This login is already occupied"}};
+            }
+            return {{"typeSQL", typeSQL}, {"status", "error"}, {"message", error_msg}};
+        }
+        // Получаем статус выполненной команды
+        std::string command_tag = PQcmdStatus(res);
+        // Если это INSERT, UPDATE или DELETE, подтверждаем успешное выполнение и завершаем функцию
+        if (command_tag.find("INSERT") != std::string::npos ||
+            command_tag.find("UPDATE") != std::string::npos ||
+            command_tag.find("DELETE") != std::string::npos) {
+
+            std::cout << "SQL выполнен успешно: " << command_tag << std::endl;
+
+            PQclear(res);
+            return {{"status", "success"}, {"message", "SQL query executed successfully"}, {"command", command_tag}};
+        }
+        int rows = PQntuples(res);
+        int cols = PQnfields(res);
+
+        json data_json;
+        for (int i = 0; i < rows; ++i) {
+            json row_json;
+            for (int j = 0; j < cols; ++j) {
+                row_json[std::string(PQfname(res, j))] = PQgetvalue(res, i, j);
+            }
+            data_json.push_back(row_json);
+        }
+        result_json["typeSQL"] = typeSQL;
+        result_json["status"] = "success";
+        result_json["data"] = data_json;
+
+        PQclear(res);
+    }
+
+    PQfinish(conn);
+    return result_json;
+}
+
+int main() {
+    int server_fd, new_sock;
+    struct sockaddr_in address;
+    char buffer[1024] = {0};
+
+    // Создание сокета
+    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
+        perror("Создание сокета не удалось");
+        return -1;
+    }
+
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = INADDR_ANY;  // Локальный адрес
+    address.sin_port = htons(PORT);        // Порт 8080
+
+    // Привязка сокета к адресу и порту
+    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+        perror("Ошибка привязки");
+        return -1;
+    }
+
+    // Ожидание подключений
+    if (listen(server_fd, 3) < 0) {
+        perror("Ошибка при прослушивании порта");
+        return -1;
+    }
+
+    std::cout << "Ожидание подключения клиента...\n";
+
+    // Бесконечный цикл для работы с клиентами
+    while (true) {
+        // Принимаем подключение от клиента
+        if ((new_sock = accept(server_fd, NULL, NULL)) < 0) {
+            perror("Ошибка при принятии подключения");
+            continue; // Если не удалось принять подключение, пробуем снова
+        }
+
+        std::cout << "[" << getCurrentTime() << "] Клиент подключен.\n";
+
+        // Чтение данных от клиента
+        int valread;
+        while ((valread = read(new_sock, buffer, 1024)) > 0) {
+            // Парсинг JSON из полученных данных
+            try {
+                json received_json = json::parse(buffer);
+
+                std::string command_type = received_json["type"];
+                std::string typeSql = received_json["typeSql"];
+                std::string command = received_json["command"];
+
+                std::cout << "[" << getCurrentTime() << "] Получено сообщение: "
+                          << "Тип команды: " << command_type << "\nТип SQL: "<< typeSql << "\nКоманда: " << command << "\n";
+
+                json response_json;
+
+                if (command_type == "sql"|| command_type == "sql_login") {
+                    bool isLogin = false;
+                    if(command_type == "sql_login"){isLogin = true;}
+                    // Если тип команды "sql", выполняем запрос
+                    response_json = executeSQLQuery(command, isLogin, typeSql);
+                }
+else if (command == "upload_avatar") {}
+
+ else {
+                    // Для остальных типов команд отправляем статус
+                    response_json["status"] = "received";
+                    response_json["command_type"] = command_type;
+                    response_json["command"] = command;
+                }
+
+                // Преобразование обратно в строку
+                std::string response_str = response_json.dump()+"\n";
+                std::cout << "Ответ клиенту: "<< response_str;
+                // Отправка ответа клиенту
+                send(new_sock, response_str.c_str(), response_str.length(), 0);
+
+            } catch (const json::parse_error& e) {
+                std::cerr << "Ошибка парсинга JSON: " << e.what() << "\n";
+            }
+
+            memset(buffer, 0, sizeof(buffer));  // Очистка буфера
+        }
+
+        if (valread == 0) {
+            std::cout << "[" << getCurrentTime() << "] Клиент отключился.\n\n\n\n\n\n\n";
+        }
+
+        // Закрытие соединения с клиентом
+        close(new_sock);
+        std::cout << "[" << getCurrentTime() << "] Ожидание нового подключения...\n";
+    }
+
+    // Закрытие серверного сокета (это не будет выполнено, т.к. сервер в бесконечном цикле)
+    close(server_fd);
+
+    return 0;
+}

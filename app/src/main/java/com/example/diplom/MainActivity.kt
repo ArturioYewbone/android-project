@@ -130,7 +130,7 @@ class MainActivity : ComponentActivity() {
             MapKitFactory.setApiKey("a48271b5-b501-406c-b9b2-98cce9c84a2c")
             MapKitFactory.initialize(this)
             isMapKitInitialized = true
-
+            Log.d(TAG, "map inititialized")
         }
         val t = aService?.getLocation()
         t?.let { userLocation = Point(it.latitude, it.longitude)
@@ -268,56 +268,5 @@ fun BottomNavigationBar(selectedTab: Int, onTabSelected: (Int) -> Unit) {
     }
 }
 
-@Composable
-fun ReviewItem(name: String, rating: Int, date: String, text: String) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp)
-            .background(Color.LightGray, shape = RoundedCornerShape(8.dp))
-            .padding(16.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Image(
-                painter = painterResource(id = android.R.drawable.ic_menu_camera),
-                contentDescription = "User Photo",
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-            )
 
-            Spacer(modifier = Modifier.width(8.dp))
-
-            Column {
-                Text(text = name, fontWeight = FontWeight.Bold)
-                Text(text = date, fontSize = 12.sp, color = Color.Gray)
-            }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Row {
-            repeat(rating) {
-                Icon(
-                    painter = painterResource(id = android.R.drawable.btn_star_big_on),
-                    contentDescription = "Star",
-                    tint = Color.Yellow,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-            repeat(5 - rating) {
-                Icon(
-                    painter = painterResource(id = android.R.drawable.btn_star_big_off),
-                    contentDescription = "Star",
-                    tint = Color.Gray,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Text(text = text)
-    }
-}
 

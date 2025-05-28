@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.LayoutInflater
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -73,11 +74,11 @@ import com.example.diplom.InfoAboutUser
 import com.example.diplom.InfoPeopleOnMap
 import com.example.diplom.MyViewModel
 import com.example.diplom.viewModel
+import com.yandex.mapkit.MapKitFactory
 import kotlinx.coroutines.launch
 
  private val TAG = "MapScreen"
 @SuppressLint("CommitPrefEdits")
-@OptIn(ExperimentalMaterialApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun MapScreen(context:Context, activeService: ActiveService, viewModel: MyViewModel) {
     val isLoading by viewModel.isLoading.collectAsState()
@@ -93,14 +94,17 @@ fun MapScreen(context:Context, activeService: ActiveService, viewModel: MyViewMo
     val p: Point? = sharedPreferences.getString("latitude", "54.467784")
         ?.let { Point(it.toDouble(), sharedPreferences.getString("longtude", "64.796943")!!.toDouble()) }
     val targetPoint = p
+    Log.d(TAG, "Point in shared - ${p?.latitude}:${p?.longitude}")
     var userLocation: Point? = null
 
     var placemark: PlacemarkMapObject? = null
 
     val infoOnMap by viewModel.infoPeopleOnMap.collectAsState()
     var selectedUser by remember { mutableStateOf<Int?>(null)}
-    var isPublic by remember { mutableStateOf(sharedPreferences.getBoolean("isPublic", false)) } // Состояние ползунка
 
+    var isPublic by remember { mutableStateOf(sharedPreferences.getBoolean("isPublic", false)) } // Состояние ползунка
+    val hasShownWarningKey = "hasShownWarning_${activeService.idUser}"
+    val lastEnableTimeKey = "lastEnableTime_${activeService.idUser}"
     // Переменная состояния, контролирующая показ диалога
     var showDialog by remember { mutableStateOf(false) }
 
@@ -128,137 +132,186 @@ fun MapScreen(context:Context, activeService: ActiveService, viewModel: MyViewMo
     }
     val info by viewModel.infoAboutUser.collectAsState()
     var showSheet by remember { mutableStateOf(false) }
-        Log.d(TAG, "isLoading=$isLoading")
-        if (isLoading) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
+    Log.d(TAG, "isLoading=$isLoading")
+    if (isLoading) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
 //                modifier = Modifier.padding(paddingValues),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(text = "Загрузка...")
-            }
-        } else {
-            Box(modifier = Modifier.fillMaxSize()) {
-                AndroidView(
-                    factory = { mapView },
-                    modifier = Modifier.fillMaxSize(),
-                    update = { mapView ->
-                        val mapObjects = mapView.mapWindow.map.mapObjects
-                        mapObjects.clear()
-                        coroutineScope.launch {
-                            val imageProvider = ImageProvider.fromResource(
-                                mapView.context,
-                                R.drawable.empty_people2
-                            )
+            contentAlignment = Alignment.Center
+        ) {
+            Text(text = "Загрузка...")
+        }
+    } else {
+        Box(modifier = Modifier.fillMaxSize()) {
 
-                            // Если местоположение уже есть, сразу перемещаем карту
-                            if (userLocation != null) {
-                                Log.d(TAG, "userlocation not null")
-                                userLocation?.let {
-                                    mapView.mapWindow.getMap().move(
-                                        CameraPosition(it, 16.0f, 0.0f, 0.0f),
-                                        Animation(Animation.Type.SMOOTH, 1f), // Smooth animation
-                                        null
-                                    )
-                                    placemark =
-                                        mapView.mapWindow.map.mapObjects.addPlacemark().apply {
-                                            geometry = it
-                                            setIcon(imageProvider)
-                                        }
-                                }
-                            } else {
-                                Log.d(TAG, "Местоположение не получено переход к targetPoint")
-                                targetPoint?.let { CameraPosition(it, 14.0f, 0.0f, 0.0f) }?.let {
-                                    mapView.mapWindow.getMap().move(
-                                        it,
-                                        Animation(Animation.Type.SMOOTH, 2f),
-                                        null
-                                    )
-                                }
-                            }
-                            infoOnMap.forEach { user ->
-                                val usersLocation = Point(user.latitude, user.longitude)
-                                Log.d(TAG,"user найден рядом: ${user.username} at ${user.latitude}, ${user.longitude}, ${user.user_id}")
-                                // Добавляем маркер для каждого пользователя
-                                val placemarkUsers =
+            AndroidView(
+                factory = { mapView },
+                modifier = Modifier.fillMaxSize(),
+                update = { mapView ->
+                    val mapObjects = mapView.mapWindow.map.mapObjects
+                    mapObjects.clear()
+                    coroutineScope.launch {
+                        val imageProvider = ImageProvider.fromResource(
+                            mapView.context,
+                            R.drawable.empty_people2
+                        )
+
+                        // Если местоположение уже есть, сразу перемещаем карту
+                        if (userLocation != null) {
+                            Log.d(TAG, "userlocation not null")
+                            userLocation?.let {
+                                mapView.mapWindow.getMap().move(
+                                    CameraPosition(it, 16.0f, 0.0f, 0.0f),
+                                    Animation(Animation.Type.SMOOTH, 1f), // Smooth animation
+                                    null
+                                )
+                                placemark =
                                     mapView.mapWindow.map.mapObjects.addPlacemark().apply {
-                                        geometry = usersLocation
+                                        geometry = it
                                         setIcon(imageProvider)
-                                        addTapListener { _, _ -> onMarkerClick(user) }
                                     }
-
-                                // Делаем маркер перетаскиваемым
-                                placemarkUsers.isDraggable = true
-                                placemarkUsers.setIconStyle(IconStyle().apply { scale = 2f })
-
-                                //placemarkUsers.addTapListener { _, _ -> onMarkerClick(user) }
-
                             }
+                        } else {
+                            Log.d(TAG, "Местоположение не получено переход к targetPoint")
+                            targetPoint?.let { CameraPosition(it, 14.0f, 0.0f, 0.0f) }?.let {
+                                mapView.mapWindow.getMap().move(
+                                    it,
+                                    Animation(Animation.Type.SMOOTH, 2f),
+                                    null
+                                )
+                            }
+                        }
+                        infoOnMap.forEach { user ->
+                            val usersLocation = Point(user.latitude, user.longitude)
+                            Log.d(TAG,"user найден рядом: ${user.username} at ${user.latitude}, ${user.longitude}, ${user.user_id}")
+                            // Добавляем маркер для каждого пользователя
+                            val placemarkUsers =
+                                mapView.mapWindow.map.mapObjects.addPlacemark().apply {
+                                    geometry = usersLocation
+                                    setIcon(imageProvider)
+                                    addTapListener { _, _ -> onMarkerClick(user) }
+                                }
+
+                            // Делаем маркер перетаскиваемым
+                            placemarkUsers.isDraggable = true
+                            placemarkUsers.setIconStyle(IconStyle().apply { scale = 2f })
+
+                            //placemarkUsers.addTapListener { _, _ -> onMarkerClick(user) }
+
                         }
                     }
-                )
-                // Вызываем `Dialog`, если showDialog == true
-                if (showDialog) {
-                    UserInfoDialog(
-                        info = info,
-                        onDismiss = { showDialog = false },
-                        onSendReview = { reviewText, rating ->
-                            Log.d(TAG, "Отзыв отправлен: $rating\n$reviewText")
-                            // Вызови здесь свой метод отправки отзыва
-                            viewModel.sendingReview(reviewText, rating, userId)
-                        }
-                    )
                 }
-
-                // Ползунок в правом верхнем углу
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(16.dp)
-                ) {
-                    Switch(
-                        checked = isPublic,
-                        onCheckedChange = { isPublic = it },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color(0xFF6200EE), // Цвет при включении
-                            uncheckedThumbColor = Color.Gray // Цвет при выключении
-                        )
-                    )
-                }
-                // Кнопка для перемещения карты на текущие координаты
-                FloatingActionButton(
-                    onClick = {
-                        Log.d(TAG, "click on button my location")
-                        val t = activeService.getLocation()
-                        Log.d(TAG, "get location after click button ${t}")
-                        userLocation?.let {
-                            mapView.mapWindow?.getMap()?.move(
-                                CameraPosition(it, 16.0f, 0.0f, 0.0f),
-                                Animation(Animation.Type.SMOOTH, 1f), // Smooth animation
-                                null
-                            )
-                        }
+            )
+            // Вызываем `Dialog`, если showDialog == true
+            if (showDialog) {
+                UserInfoDialog(
+                    info = info,
+                    onDismiss = { showDialog = false },
+                    onSendReview = { reviewText, rating ->
+                        Log.d(TAG, "Отзыв отправлен: $rating\n$reviewText")
+                        // Вызови здесь свой метод отправки отзыва
+                        viewModel.sendingReview(reviewText, rating, userId)
                     },
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd) // Размещение в правом нижнем углу
-                        .padding(16.dp) // Отступ
-                ) {
-                    Icon(Icons.Filled.LocationOn, contentDescription = "Go to My Location")
-                }
-
+                    activeService
+                )
             }
+
+            // Ползунок в правом верхнем углу
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(16.dp)
+            ) {
+                Switch(
+                    checked = isPublic,
+                    onCheckedChange = { newValue ->
+                        if (!newValue) {
+                            // Если выключает ползунок
+                            val hasShownWarning = sharedPreferences.getBoolean(hasShownWarningKey, false)
+                            if (!hasShownWarning) {
+                                Toast.makeText(
+                                    context,
+                                    "Когда включите обратно, вы не сможете ставить отзывы полчаса.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+
+                                // Отмечаем, что предупреждение уже показывалось
+                                editor.putBoolean(hasShownWarningKey, true).apply()
+                            }
+                        } else {
+                            // Если включает обратно — сохраняем текущее время
+                            val currentTime = System.currentTimeMillis()
+                            editor.putLong(lastEnableTimeKey, currentTime).apply()
+                        }
+
+                        // 1. Обновляем локальное состояние
+                        isPublic = newValue
+
+                        // 2. Сохраняем в SharedPreferences
+                        editor.putBoolean("isPublic", newValue).apply()
+                        viewModel.sendCommand("UPDATE myusers " +
+                                "SET visibility = ${newValue} " +
+                                "WHERE user_id = ${activeService.idUser};", "sql")
+
+                        // 3. Отправляем запрос на сервер
+                    },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color(0xFF6200EE), // Цвет при включении
+                        uncheckedThumbColor = Color.Gray // Цвет при выключении
+                    )
+                )
+            }
+            // Кнопка для перемещения карты на текущие координаты
+            FloatingActionButton(
+                onClick = {
+                    Log.d(TAG, "click on button my location")
+                    val t = activeService.getLocation()
+                    Log.d(TAG, "get location after click button ${t}")
+                    userLocation?.let {
+                        mapView.mapWindow?.getMap()?.move(
+                            CameraPosition(it, 16.0f, 0.0f, 0.0f),
+                            Animation(Animation.Type.SMOOTH, 1f), // Smooth animation
+                            null
+                        )
+                    }
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd) // Размещение в правом нижнем углу
+                    .padding(16.dp) // Отступ
+            ) {
+                Icon(Icons.Filled.LocationOn, contentDescription = "Go to My Location")
+            }
+
         }
+    }
 
 }
+
 @Composable
 fun UserInfoDialog(
     info: InfoAboutUser,
     onDismiss: () -> Unit,
-    onSendReview: (String, Int) -> Unit
+    onSendReview: (String, Int) -> Unit,
+    activeService: ActiveService
 ) {
     var showReviewField by remember { mutableStateOf(false) }
     var reviewText by remember { mutableStateOf("") }
     var rating by remember { mutableStateOf(0) }
+
+    val context = LocalContext.current
+    val prefs = remember {
+        context.getSharedPreferences("MapScreen", Context.MODE_PRIVATE)
+    }
+    val lastEnableTimeKey = "lastEnableTime_${activeService.idUser}"
+    val lastEnableTime = prefs.getLong(lastEnableTimeKey, 0L)
+    // 30 минут в миллисекундах
+    val halfHourMillis = 30 * 60 * 1000L
+    // сколько прошло с момента последнего включения
+    val elapsed = System.currentTimeMillis() - lastEnableTime
+    // разрешено ли сейчас оставлять отзыв
+    val canLeaveReview = elapsed >= halfHourMillis
+    // сколько ещё (в минутах) ждать
+    val minutesLeft = ((halfHourMillis - elapsed) / 60000).coerceAtLeast(0)
 
     Dialog(onDismissRequest = onDismiss) {
         Box(
@@ -320,9 +373,24 @@ fun UserInfoDialog(
                         Text("Отправить")
                     }
                 } else {
-                    Button(onClick = { showReviewField = true }) {
-                        Text("Оставить отзыв")
+                    Column (horizontalAlignment = Alignment.CenterHorizontally){
+                        Button(
+                            onClick = { showReviewField = true },
+                            enabled = canLeaveReview
+                        ) {
+                            Text("Оставить отзыв")
+                        }
+                        if (!canLeaveReview) {
+                            Text(
+                                text = "Еще не прошло 30 минут с момента включения. Подождите $minutesLeft мин.",
+                                color = Color.Red,
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                        }
                     }
+//                    Button(onClick = { showReviewField = true }) {
+//                        Text("Оставить отзыв")
+//                    }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -333,7 +401,49 @@ fun UserInfoDialog(
         }
     }
 }
+@Composable
+fun ReviewButton(
+    activeService: ActiveService,        // тот же объект с idUser
+    showReviewField: Boolean,
+    onShowReviewFieldChange: (Boolean) -> Unit
+) {
+    val context = LocalContext.current
+    val prefs = remember {
+        context.getSharedPreferences("AppPrefs", Context.MODE_PRIVATE)
+    }
+    // Ключ, который мы записывали при включении visibility
+    val lastEnableTimeKey = "lastEnableTime_${activeService.idUser}"
+    val lastEnableTime = prefs.getLong(lastEnableTimeKey, 0L)
 
+    // 30 минут в миллисекундах
+    val halfHourMillis = 30 * 60 * 1000L
+    // сколько прошло с момента включения
+    val elapsed = System.currentTimeMillis() - lastEnableTime
+    // можно ли оставить отзыв
+    val canLeaveReview = elapsed >= halfHourMillis
+    // сколько осталось ждать (в минутах)
+    val minutesLeft = ((halfHourMillis - elapsed) / 60000).coerceAtLeast(0)
+
+    Column {
+        Button(
+            onClick = {
+                onShowReviewFieldChange(true)
+            },
+            enabled = canLeaveReview
+        ) {
+            Text("Оставить отзыв")
+        }
+
+        if (!canLeaveReview) {
+            Text(
+                text = "Еще не прошло 30 минут с момента включения. Подождите $minutesLeft мин.",
+                color = Color.Red,
+                modifier = Modifier
+                    .padding(top = 8.dp)
+            )
+        }
+    }
+}
 @Composable
 fun MarkerInfoSheet(idUser: Int?, viewModel: MyViewModel, data: InfoAboutUser) {
     Log.d(TAG, "open MarkerInfoSheet")
