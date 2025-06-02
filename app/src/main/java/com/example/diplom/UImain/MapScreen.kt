@@ -7,6 +7,8 @@ import android.content.Context.MODE_PRIVATE
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.IntentFilter
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -73,11 +75,13 @@ import androidx.compose.ui.window.Dialog
 import com.example.diplom.InfoAboutUser
 import com.example.diplom.InfoPeopleOnMap
 import com.example.diplom.MyViewModel
-import com.example.diplom.viewModel
 import com.yandex.mapkit.MapKitFactory
 import kotlinx.coroutines.launch
+import android.net.Uri
+import android.util.TypedValue
+import java.io.File
 
- private val TAG = "MapScreen"
+private val TAG = "MapScreen"
 @SuppressLint("CommitPrefEdits")
 @Composable
 fun MapScreen(context:Context, activeService: ActiveService, viewModel: MyViewModel) {
@@ -86,9 +90,7 @@ fun MapScreen(context:Context, activeService: ActiveService, viewModel: MyViewMo
     val sharedPreferences = context.getSharedPreferences("MapScreen", MODE_PRIVATE)
     val editor = sharedPreferences.edit()
     var userId by remember { mutableStateOf<Int>(0)}
-    val coroutineScope = rememberCoroutineScope()
 
-    //var mapView: MapView? by remember { mutableStateOf(null) }
     val mapView = remember { MapView(context) }
 
     val p: Point? = sharedPreferences.getString("latitude", "54.467784")
@@ -100,6 +102,8 @@ fun MapScreen(context:Context, activeService: ActiveService, viewModel: MyViewMo
     var placemark: PlacemarkMapObject? = null
 
     val infoOnMap by viewModel.infoPeopleOnMap.collectAsState()
+    val avatars by viewModel.avatars.collectAsState(initial = emptyMap())
+
     var selectedUser by remember { mutableStateOf<Int?>(null)}
 
     var isPublic by remember { mutableStateOf(sharedPreferences.getBoolean("isPublic", false)) } // Состояние ползунка
@@ -121,7 +125,6 @@ fun MapScreen(context:Context, activeService: ActiveService, viewModel: MyViewMo
     // Получаем местоположение пользователя ОДИН раз при запуске
     LaunchedEffect(Unit) {
         Log.d(TAG, "Получение location")
-
         viewModel.getPeopleOnMap()
     }
     LaunchedEffect(selectedUser) {
@@ -130,77 +133,116 @@ fun MapScreen(context:Context, activeService: ActiveService, viewModel: MyViewMo
             viewModel.getInfoAboutUser(userId) // Вызываем метод получения данных
         }
     }
+    LaunchedEffect(infoOnMap, avatars) {
+        val mapObjects = mapView.mapWindow.map.mapObjects
+        mapObjects.clear()
+
+        val ctx = mapView.context
+        val prefs = ctx.getSharedPreferences("profile_prefs", MODE_PRIVATE)
+        val photoPath = prefs.getString("photo_path", null)
+
+        val iconDp = 48f
+        val iconPx = TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP,
+            iconDp,
+            ctx.resources.displayMetrics
+        ).toInt()
+
+        // Выбираем ImageProvider: либо из Bitmap по URI, либо дефолтный ресурс
+        val imageProvider = if (!photoPath.isNullOrBlank()) {
+            // загружаем Bitmap из файла
+            val file = File(photoPath)
+            val originalBmp: Bitmap? = if (file.exists()) {
+                BitmapFactory.decodeFile(file.absolutePath)
+            } else null
+
+            val scaledBmp: Bitmap? = originalBmp?.let { bmp ->
+                Bitmap.createScaledBitmap(bmp, iconPx, iconPx, true)
+            }
+
+            if (scaledBmp != null) {
+                ImageProvider.fromBitmap(scaledBmp)
+            } else {
+                ImageProvider.fromResource(ctx, R.drawable.empty_people2)
+            }
+        } else {
+            ImageProvider.fromResource(ctx, R.drawable.empty_people2)
+        }
+
+        // Если местоположение уже есть, сразу перемещаем карту
+        if (userLocation != null) {
+            Log.d(TAG, "userlocation not null")
+            userLocation?.let {
+                mapView.mapWindow.getMap().move(
+                    CameraPosition(it, 16.0f, 0.0f, 0.0f),
+                    Animation(Animation.Type.SMOOTH, 1f), // Smooth animation
+                    null
+                )
+                placemark =
+                    mapView.mapWindow.map.mapObjects.addPlacemark().apply {
+                        geometry = it
+                        setIcon(imageProvider)
+                    }
+            }
+        } else {
+            Log.d(TAG, "Местоположение не получено переход к targetPoint")
+            targetPoint?.let { CameraPosition(it, 14.0f, 0.0f, 0.0f) }?.let {
+                mapView.mapWindow.getMap().move(
+                    it,
+                    Animation(Animation.Type.SMOOTH, 2f),
+                    null
+                )
+            }
+        }
+        infoOnMap.forEach { user ->
+            val loc = Point(user.latitude, user.longitude)
+            Log.d(TAG,"user найден рядом: ${user.username} at ${user.latitude}, ${user.longitude}, ${user.user_id}")
+
+            // 1) Пытаемся достать байты из avatars
+            val bmpProvider = avatars[user.user_id]?.let { bytes ->
+                // если байты есть — декодируем в Bitmap
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    ?.let { bmp ->
+                        // масштабируем под нужный размер
+                        val iconDp = 48f
+                        val iconPx = TypedValue.applyDimension(
+                            TypedValue.COMPLEX_UNIT_DIP,
+                            iconDp,
+                            mapView.context.resources.displayMetrics
+                        ).toInt()
+                        val scaled = Bitmap.createScaledBitmap(bmp, iconPx, iconPx, true)
+                        ImageProvider.fromBitmap(scaled)
+                    }
+            }
+            // 2) либо дефолтная иконка
+            val imageProvider = bmpProvider
+                ?: ImageProvider.fromResource(mapView.context, R.drawable.empty_people2)
+
+            // 3) добавляем маркер
+            mapObjects.addPlacemark(loc, imageProvider).apply {
+                isDraggable = true
+                setIconStyle(IconStyle().apply { scale = 2f })
+                addTapListener { _, _ ->
+                    onMarkerClick(user)
+                }
+            }
+        }
+    }
     val info by viewModel.infoAboutUser.collectAsState()
     var showSheet by remember { mutableStateOf(false) }
     Log.d(TAG, "isLoading=$isLoading")
     if (isLoading) {
         Box(
             modifier = Modifier.fillMaxSize(),
-//                modifier = Modifier.padding(paddingValues),
             contentAlignment = Alignment.Center
         ) {
             Text(text = "Загрузка...")
         }
     } else {
         Box(modifier = Modifier.fillMaxSize()) {
-
             AndroidView(
                 factory = { mapView },
-                modifier = Modifier.fillMaxSize(),
-                update = { mapView ->
-                    val mapObjects = mapView.mapWindow.map.mapObjects
-                    mapObjects.clear()
-                    coroutineScope.launch {
-                        val imageProvider = ImageProvider.fromResource(
-                            mapView.context,
-                            R.drawable.empty_people2
-                        )
-
-                        // Если местоположение уже есть, сразу перемещаем карту
-                        if (userLocation != null) {
-                            Log.d(TAG, "userlocation not null")
-                            userLocation?.let {
-                                mapView.mapWindow.getMap().move(
-                                    CameraPosition(it, 16.0f, 0.0f, 0.0f),
-                                    Animation(Animation.Type.SMOOTH, 1f), // Smooth animation
-                                    null
-                                )
-                                placemark =
-                                    mapView.mapWindow.map.mapObjects.addPlacemark().apply {
-                                        geometry = it
-                                        setIcon(imageProvider)
-                                    }
-                            }
-                        } else {
-                            Log.d(TAG, "Местоположение не получено переход к targetPoint")
-                            targetPoint?.let { CameraPosition(it, 14.0f, 0.0f, 0.0f) }?.let {
-                                mapView.mapWindow.getMap().move(
-                                    it,
-                                    Animation(Animation.Type.SMOOTH, 2f),
-                                    null
-                                )
-                            }
-                        }
-                        infoOnMap.forEach { user ->
-                            val usersLocation = Point(user.latitude, user.longitude)
-                            Log.d(TAG,"user найден рядом: ${user.username} at ${user.latitude}, ${user.longitude}, ${user.user_id}")
-                            // Добавляем маркер для каждого пользователя
-                            val placemarkUsers =
-                                mapView.mapWindow.map.mapObjects.addPlacemark().apply {
-                                    geometry = usersLocation
-                                    setIcon(imageProvider)
-                                    addTapListener { _, _ -> onMarkerClick(user) }
-                                }
-
-                            // Делаем маркер перетаскиваемым
-                            placemarkUsers.isDraggable = true
-                            placemarkUsers.setIconStyle(IconStyle().apply { scale = 2f })
-
-                            //placemarkUsers.addTapListener { _, _ -> onMarkerClick(user) }
-
-                        }
-                    }
-                }
+                modifier = Modifier.fillMaxSize()
             )
             // Вызываем `Dialog`, если showDialog == true
             if (showDialog) {
@@ -209,7 +251,6 @@ fun MapScreen(context:Context, activeService: ActiveService, viewModel: MyViewMo
                     onDismiss = { showDialog = false },
                     onSendReview = { reviewText, rating ->
                         Log.d(TAG, "Отзыв отправлен: $rating\n$reviewText")
-                        // Вызови здесь свой метод отправки отзыва
                         viewModel.sendingReview(reviewText, rating, userId)
                     },
                     activeService
@@ -234,7 +275,6 @@ fun MapScreen(context:Context, activeService: ActiveService, viewModel: MyViewMo
                                     "Когда включите обратно, вы не сможете ставить отзывы полчаса.",
                                     Toast.LENGTH_LONG
                                 ).show()
-
                                 // Отмечаем, что предупреждение уже показывалось
                                 editor.putBoolean(hasShownWarningKey, true).apply()
                             }
@@ -252,8 +292,6 @@ fun MapScreen(context:Context, activeService: ActiveService, viewModel: MyViewMo
                         viewModel.sendCommand("UPDATE myusers " +
                                 "SET visibility = ${newValue} " +
                                 "WHERE user_id = ${activeService.idUser};", "sql")
-
-                        // 3. Отправляем запрос на сервер
                     },
                     colors = SwitchDefaults.colors(
                         checkedThumbColor = Color(0xFF6200EE), // Цвет при включении
@@ -281,10 +319,8 @@ fun MapScreen(context:Context, activeService: ActiveService, viewModel: MyViewMo
             ) {
                 Icon(Icons.Filled.LocationOn, contentDescription = "Go to My Location")
             }
-
         }
     }
-
 }
 
 @Composable
@@ -368,7 +404,7 @@ fun UserInfoDialog(
                         if (!isReviewEmpty && !isRatingEmpty) {
                             onSendReview(reviewText, rating)
                             onDismiss() // Закрыть диалог после отправки
-                        } // Закрыть диалог после отправки
+                        }
                     }) {
                         Text("Отправить")
                     }
@@ -388,9 +424,6 @@ fun UserInfoDialog(
                             )
                         }
                     }
-//                    Button(onClick = { showReviewField = true }) {
-//                        Text("Оставить отзыв")
-//                    }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -403,7 +436,7 @@ fun UserInfoDialog(
 }
 @Composable
 fun ReviewButton(
-    activeService: ActiveService,        // тот же объект с idUser
+    activeService: ActiveService,
     showReviewField: Boolean,
     onShowReviewFieldChange: (Boolean) -> Unit
 ) {
@@ -411,7 +444,6 @@ fun ReviewButton(
     val prefs = remember {
         context.getSharedPreferences("AppPrefs", Context.MODE_PRIVATE)
     }
-    // Ключ, который мы записывали при включении visibility
     val lastEnableTimeKey = "lastEnableTime_${activeService.idUser}"
     val lastEnableTime = prefs.getLong(lastEnableTimeKey, 0L)
 

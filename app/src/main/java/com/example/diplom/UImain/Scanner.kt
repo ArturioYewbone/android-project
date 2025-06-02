@@ -25,6 +25,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,8 +37,12 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.example.diplom.ActiveService
+import com.example.diplom.InfoAboutUser
+import com.example.diplom.MyViewModel
 import com.example.diplom.NFCManager
 import com.example.diplom.ScannigProfile
+import com.example.diplom.activeService
 import com.example.diplom.activityResultLauncher
 import com.example.diplom.generateQRCode
 import com.google.mlkit.vision.barcode.BarcodeScanner
@@ -45,11 +50,10 @@ import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 
+private val TAG = "Scanner"
 @Composable
-fun Scanner(nfcIntent: Intent? = null, context: Context) {
+fun Scanner(nfcIntent: Intent? = null, context: Context, activeService: ActiveService, myViewModel: MyViewModel) {
     var selectedTab by remember { mutableStateOf("showQR") }
-    var qrBitmap: Bitmap? = generateQRCode("1", 500) // Замените на код генерации вашего QR-кода
-
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -59,7 +63,7 @@ fun Scanner(nfcIntent: Intent? = null, context: Context) {
         if (isGranted) {
             selectedTab = "scan"
         } else {
-            // Разрешение не предоставлено, можно показать сообщение или выполнить другие действия
+            // Разрешение не предоставлено
         }
     }
     val scanQRCodeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
@@ -123,22 +127,51 @@ fun Scanner(nfcIntent: Intent? = null, context: Context) {
                     )
                 }
                 "scanQR" -> {
-                    QRCodeScannerView(context, lifecycleOwner = lifecycleOwner)
+                    QRCodeScannerView(context, lifecycleOwner = lifecycleOwner, myViewModel)
                 }
             }
         }
     }
 }
+private var id = 0
 @Composable
 fun QRCodeScannerView(
     context: Context,
-    lifecycleOwner: androidx.lifecycle.LifecycleOwner
+    lifecycleOwner: androidx.lifecycle.LifecycleOwner,
+    viewModel: MyViewModel
 ) {
     val context = LocalContext.current
     val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
     val previewView = remember { PreviewView(context) }
 
-    LaunchedEffect(cameraProviderFuture) {
+    val userInfo by viewModel.infoAboutUser
+        .collectAsState(initial = InfoAboutUser("", "",0f,))
+    val infoPeopleOnMap by viewModel.infoPeopleOnMap.collectAsState()
+// Флаг, показываем ли диалог
+    val showDialog = remember(userInfo, infoPeopleOnMap) {
+        // диалог — если у нас есть отсканированный ID и он встречается в списке
+        id != 0 && infoPeopleOnMap.any { it.user_id == id }
+    }
+    // как только showDialog стал true — прекратим сканирование
+    LaunchedEffect(showDialog) {
+        if (showDialog) {
+            // realtime: отцепляем камеру
+            val cameraProvider = cameraProviderFuture.get()
+            cameraProvider.unbindAll()
+            isScanningActive = false
+        }
+    }
+    // Как только пришли реальные данные — показываем диалог
+//    LaunchedEffect(userInfo, infoPeopleOnMap) {
+//        if (id != 0 &&
+//            infoPeopleOnMap.any { it.user_id == id }
+//        ) {
+//            showDialog = true
+//        }
+//    }
+
+    LaunchedEffect(cameraProviderFuture, isScanningActive) {
+        if (!isScanningActive) return@LaunchedEffect
         val cameraProvider = cameraProviderFuture.get()
         val preview = Preview.Builder().build().also {
             it.setSurfaceProvider(previewView.surfaceProvider)
@@ -152,12 +185,20 @@ fun QRCodeScannerView(
                 analysis.setAnalyzer(ContextCompat.getMainExecutor(context)) { imageProxy ->
                     val mediaImage = imageProxy.image
                     if (mediaImage != null) {
+                        if (!isScanningActive) {
+                            imageProxy.close()
+                            return@setAnalyzer
+                        }
                         val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
                         barcodeScanner.process(image)
                             .addOnSuccessListener { barcodes ->
-                                for (barcode in barcodes) {
-                                    handleBarcode(context, barcode)
-                                    break
+                                barcodes.firstOrNull()?.let { barcode ->
+                                    val text = barcode.displayValue?.toIntOrNull()
+                                    if (text != null) {
+                                        id = text
+                                        viewModel.getPeopleOnMap()
+                                        viewModel.getInfoAboutUser(text)
+                                    }
                                 }
                             }
                             .addOnCompleteListener {
@@ -181,33 +222,53 @@ fun QRCodeScannerView(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        AndroidView(factory = { previewView })
+    Box(Modifier.fillMaxSize()) {
+        // рисуем превью только если мы ещё сканируем
+        if (isScanningActive) {
+            AndroidView({ previewView }, Modifier.matchParentSize())
+        }
+    }
+    if (showDialog) {
+        UserInfoDialog(
+            info          = userInfo,
+            activeService = activeService!!/* ваш activeService объект */,
+            onDismiss     = {
+                id       = 0 // опционально — очистить Flow в VM
+                isScanningActive = true
+                // можно сбросить userInfo в viewModel, если нужно
+            },
+            onSendReview = { reviewText, rating ->
+                viewModel.sendingReview(reviewText, rating, id)
+            }
+        )
     }
 }
 public var isScanningActive = true
 
 
-private fun handleBarcode(context: Context, barcode: Barcode) {
+private fun handleBarcode(context: Context, barcode: Barcode, viewModel: MyViewModel) {
     if (!isScanningActive) return
     when (barcode.valueType) {
         Barcode.TYPE_URL -> {
-            // Обработайте URL
-            Log.d("ddw", "URL scanning")
+            Log.d(TAG, "URL scanning")
         }
         Barcode.TYPE_TEXT -> {
-            // Обработайте текст
             val text = barcode.displayValue
-            Log.d("ddw", "$text")
+            Log.d(TAG, "$text")
+            text?.let {
+                viewModel.getPeopleOnMap()
+                viewModel.getInfoAboutUser(it.toInt())
+
+                id = it.toInt()
+            }
+
             stopScanning()
             val intent = Intent(context, ScannigProfile::class.java).apply {
                 putExtra("text", text)
             }
             activityResultLauncher.launch(intent)
         }
-        // Добавьте обработку других типов штрихкодов
     }
-
 }
 
 private fun stopScanning() {

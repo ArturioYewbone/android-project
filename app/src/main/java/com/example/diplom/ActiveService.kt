@@ -21,7 +21,6 @@ import kotlinx.coroutines.*
 import com.google.android.gms.location.*
 import com.yandex.mapkit.geometry.Point
 import androidx.compose.runtime.*
-import com.example.diplom.UImain.UploadAvatarRequest
 import com.google.gson.GsonBuilder
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -39,8 +38,8 @@ class ActiveService : Service() {
 
     private var dataOut: DataOutputStream? = null
     private var dataIn: DataInputStream? = null
-    private val serverIp = "82.179.140.18"  // Замените на ваш IP
-    private val serverPort = 44021  // Замените на ваш порт
+    private val serverIp = "62.60.150.199"//"82.179.140.18"  // Замените на ваш IP
+    private val serverPort = 44015  // Замените на ваш порт
     private var lastKnownLocation: Point? = null
     private val executor = Executors.newSingleThreadScheduledExecutor()
     private val coroutineScope = CoroutineScope(Dispatchers.Default)
@@ -48,9 +47,6 @@ class ActiveService : Service() {
     private lateinit var locationCallback: LocationCallback
 
     var idUser: Int = 0
-
-//    private val _response = MutableStateFlow("")
-//    val rresponse: StateFlow<String> = _response
 
     private val _responseFlow = MutableSharedFlow<String>(replay = 1)
     val responseFlow: SharedFlow<String> = _responseFlow
@@ -108,12 +104,9 @@ class ActiveService : Service() {
             // Запускаем задачи на периодическое обновление местоположения и отправку команд
             executor.scheduleAtFixedRate({
                 sendLocationToServer()
-                // Вы можете добавить другие команды, которые нужно отправить периодически
-                //sendCommandFromActivity("Some Command")
-            }, 0, 3000, TimeUnit.SECONDS) // Интервал обновления: каждые 10 секунд
+            }, 0, 3000, TimeUnit.SECONDS) // Интервал обновления: каждые 30 секунд
         }
     }
-
 
     // Публичный метод для получения текущего местоположения
     fun getLocation(): Point? {
@@ -145,20 +138,39 @@ class ActiveService : Service() {
         coroutineScope.launch {
             val response = sendToServer(command, typeSql, avatar = avatar)
             _responseFlow.emit(response?:"")
-            //_response.value = response ?: ""
-            //Log.d(TAG, "Response from server: $response")
         }
     }
-    fun sendingAvatar(avatar: UploadAvatarRequest){
-        val json = GsonBuilder()
-            .disableHtmlEscaping()    // чтобы не было \u003d вместо '='
-            .create()
-            .toJson(avatar)
-        outputStreamWriter?.apply {
-            write(json)
-            write("\n")
-            flush()
-        }
+    suspend fun downloadAvatar(userId: Int): ByteArray? = withContext(Dispatchers.IO) {
+        dataOut?.let {
+            synchronized(it) {
+        // 1) Заголовок JSON только с типом и user_id
+        val headerJson = JSONObject().apply {
+            put("type", "download_avatar")
+            put("user_id", userId)
+        }.toString()
+        val headerBytes = headerJson.toByteArray(Charsets.UTF_8)
+
+        // 2) Шлём длину + JSON
+        dataOut!!.writeInt(headerBytes.size)
+        dataOut!!.write(headerBytes)
+        dataOut!!.flush()
+
+        // 3) Читаем ответ: сначала длину JSON-заголовка
+        val respHdrLen = dataIn!!.readInt()
+        val respHdrBuf = ByteArray(respHdrLen)
+        dataIn!!.readFully(respHdrBuf)
+        val respHdrStr = String(respHdrBuf, Charsets.UTF_8)
+        val respJson = JSONObject(respHdrStr)
+
+        // 4) Убеждаемся, что статус OK и забираем size
+        if (respJson.optString("status") != "ok")
+            throw IOException("Server error: ${respJson.optString("message")}")
+
+        val size = respJson.getInt("size")
+        // 5) Читаем ровно size байт «сырых» данных
+        val imgBuf = ByteArray(size)
+        dataIn!!.readFully(imgBuf)
+        imgBuf}}
     }
     private suspend fun sendToServer(command: String, typeSql: String, avatar:ByteArray?): String? {
         return withContext(Dispatchers.IO) {
@@ -178,92 +190,90 @@ class ActiveService : Service() {
                     dataOut = DataOutputStream(os)
                     dataIn  = DataInputStream(is_)
                 }
-                if (typeSql=="send_avatar"){
-                    // 1) Формируем JSON-заголовок
-                    Log.d(TAG, "send photo")
-                    val headerJson = JSONObject().apply {
-                        put("type", "upload_avatar")
-                        put("user_id", idUser)          // ваш идентификатор
-                        put("size", avatar!!.size)         // длина полезных байт
-                    }.toString()
-                    Log.d(TAG, "header complite")
+                dataOut?.let {
+                    synchronized(it) {
+                        if (typeSql=="send_avatar"){
+                            // 1) Формируем JSON-заголовок
+                            Log.d(TAG, "send photo")
+                            val headerJson = JSONObject().apply {
+                                put("type", "upload_avatar")
+                                put("user_id", idUser)
+                                put("size", avatar!!.size)
+                            }.toString()
+                            Log.d(TAG, "header complite")
 
-                    val headerBytes = headerJson.toByteArray(Charsets.UTF_8)
+                            val headerBytes = headerJson.toByteArray(Charsets.UTF_8)
 
-                    // 2) Шлём: [4-байта длина JSON][JSON UTF-8][raw-bytes]
-                    dataOut!!.apply {
-                        writeInt(headerBytes.size)
-                        write(headerBytes)
-                        write(avatar)
-                        flush()
-                    }
-                    Log.d(TAG, "Sending compite")
+                            // 2) Шлём: [4-байта длина JSON][JSON UTF-8][raw-bytes]
+                            dataOut!!.apply {
+                                writeInt(headerBytes.size)
+                                write(headerBytes)
+                                write(avatar)
+                                flush()
+                            }
+                            Log.d(TAG, "Sending compite")
 
-                    // 3) Читаем ответ: сначала 4-байта длина, потом JSON
-                    val respLen = dataIn!!.readInt()
-                    val respBuf = ByteArray(respLen)
-                    dataIn!!.readFully(respBuf)
-                    Log.d(TAG, "response - ${respBuf}")
-                    return@withContext String(respBuf, Charsets.UTF_8)
-                }
-                var requestData = RequestData("sql", typeSql, command)
-                if(command[0] =='1'){
-                    val commandLogin = command.substring(1)
-                    requestData = RequestData("sql_login", typeSql, commandLogin)
-                }else if(command[0] == '2'){
-                    val commandLogin = command.substring(1)
-                    requestData = RequestData("sql_login", typeSql, commandLogin)
-                }
-
-                val jsonStr = GsonBuilder().disableHtmlEscaping().create().toJson(requestData)
-                val jsonBytes = jsonStr.toByteArray(Charsets.UTF_8)
-                //Log.d(TAG, "JSON complite: $jsonStr")
-                // 2) Шлём: [4-байта длина JSON][JSON UTF-8]
-                dataOut!!.writeInt(jsonBytes.size)
-                dataOut!!.write(jsonBytes)
-                dataOut!!.flush()
-                // Сериализуем объект в JSON с помощью Gson
-//                val gson = Gson()
-//                val json = gson.toJson(requestData)
-//
-//                // Отправляем JSON
-//                outputStreamWriter?.write("$json\n")
-//                outputStreamWriter?.flush()
-                Log.d(TAG, "JSON sent in sendToServer: $jsonStr")
-                // 3) Читаем ответ: [4-байта длина][JSON UTF-8]
-                val respLen = dataIn!!.readInt()
-                val respBuf = ByteArray(respLen)
-                dataIn!!.readFully(respBuf)
-                val response = String(respBuf, Charsets.UTF_8)
-                //val response = bufferedReader?.readLine()
-                Log.d(TAG, "Server response: $response")
-                if(command.startsWith("SELECT user_id" ) && !response.isNullOrEmpty()){
-                    try {
-                        // Преобразуем строку в JSON-массив
-                        val jsonObject = JSONObject(response)
-                        val dataArray = jsonObject.getJSONArray("data")
-                        // Берем первый объект из массива
-                        if (dataArray.length() > 0) {
-                            // Берем первый объект из массива
-                            val userData = dataArray.getJSONObject(0)
-
-                            // Извлекаем user_id и присваиваем переменной
-                            idUser = userData.getInt("user_id")
-                            Log.d(TAG, "Parsed user_id: $idUser")
-                            sendLocationToServer()
+                            // 3) Читаем ответ: сначала 4-байта длина, потом JSON
+                            val respLen = dataIn!!.readInt()
+                            val respBuf = ByteArray(respLen)
+                            dataIn!!.readFully(respBuf)
+                            val respHdrStr = String(respBuf, Charsets.UTF_8)
+                            val respJson = JSONObject(respHdrStr)
+                            if (respJson.optString("status") != "ok")
+                                Log.d(TAG, "Server error: ${respJson.optString("message")}")
+                            Log.d(TAG, "response - ${respBuf}")
+                            return@withContext String(respBuf, Charsets.UTF_8)
                         }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error parsing user_id: ${e.message}")
+                        var requestData = RequestData("sql", typeSql, command)
+                        if(command[0] =='1'){
+                            val commandLogin = command.substring(1)
+                            requestData = RequestData("sql_login", typeSql, commandLogin)
+                        }else if(command[0] == '2'){
+                            val commandLogin = command.substring(1)
+                            requestData = RequestData("sql_login", typeSql, commandLogin)
+                        }
+
+                        val jsonStr = GsonBuilder().disableHtmlEscaping().create().toJson(requestData)
+                        val jsonBytes = jsonStr.toByteArray(Charsets.UTF_8)
+                        // 2) Шлём: [4-байта длина JSON][JSON UTF-8]
+                        dataOut!!.writeInt(jsonBytes.size)
+                        dataOut!!.write(jsonBytes)
+                        dataOut!!.flush()
+                        Log.d(TAG, "JSON sent in sendToServer: $jsonStr")
+                        // 3) Читаем ответ: [4-байта длина][JSON UTF-8]
+                        val respLen = dataIn!!.readInt()
+                        val respBuf = ByteArray(respLen)
+                        dataIn!!.readFully(respBuf)
+                        val response = String(respBuf, Charsets.UTF_8)
+                        Log.d(TAG, "Server response: $response")
+                        if(command.startsWith("SELECT user_id" ) && !response.isNullOrEmpty()){
+                            try {
+                                // Преобразуем строку в JSON-массив
+                                val jsonObject = JSONObject(response)
+                                val dataArray = jsonObject.getJSONArray("data")
+                                if (dataArray.length() > 0) {
+                                    // Берем первый объект из массива
+                                    val userData = dataArray.getJSONObject(0)
+
+                                    // Извлекаем user_id и присваиваем переменной
+                                    idUser = userData.getInt("user_id")
+                                    Log.d(TAG, "Parsed user_id: $idUser")
+                                    sendLocationToServer()
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error parsing user_id: ${e.message}")
+                            }
+                        }
+                        response
                     }
                 }
-                response
+
             } catch (e: Exception) {
                 Log.e(TAG, "Error sending command: ${e.message}")
                 null
             }
         }
     }
-    //CoroutineScope(Dispatchers.IO).launch {
     private fun sendLocationToServer() {
         if(idUser == 0){return}
         coroutineScope.launch {
@@ -293,11 +303,6 @@ class ActiveService : Service() {
             }
         }
     }
-    data class UploadAvatarRequest(
-        val command: String = "upload_avatar",
-        val userId: Int,
-        val avatarBase64: String
-    )
     data class RequestData(
         val type: String,
         val typeSql:String,
@@ -308,28 +313,18 @@ class ActiveService : Service() {
             dataOut?.let {
                 synchronized(it) {
                     try {
-
                         // Создаём объект с SQL запросом и данными
                         val requestData = RequestData("sql", "", data)
                         Log.d(TAG, requestData.toString())
                         // Сериализуем объект в JSON с помощью Gson
                         val jsonStr = GsonBuilder().disableHtmlEscaping().create().toJson(requestData)
                         val jsonBytes = jsonStr.toByteArray(Charsets.UTF_8)
-                        //Log.d(TAG, "JSON complite: $jsonStr")
                         // 2) Шлём: [4-байта длина JSON][JSON UTF-8]
                         dataOut!!.writeInt(jsonBytes.size)
                         dataOut!!.write(jsonBytes)
                         dataOut!!.flush()
 
-//                        val gson = Gson()
-//                        val json = gson.toJson(requestData)
-//                        Log.d(TAG, json)
-//                        // Отправляем JSON
-//                        it.write("$json\n")
-//                        it.flush()
-
                         Log.d(TAG, "Sent JSON in sendDataSafely: $jsonStr")
-                        //val response = bufferedReader?.readLine()
                         val respLen = dataIn!!.readInt()
                         val respBuf = ByteArray(respLen)
                         dataIn!!.readFully(respBuf)
@@ -343,7 +338,6 @@ class ActiveService : Service() {
                 }
             }
         }
-
     }
     override fun onBind(intent: Intent?): IBinder? {
         return binder

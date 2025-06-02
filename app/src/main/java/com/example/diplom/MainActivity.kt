@@ -110,7 +110,6 @@ class MainActivity : ComponentActivity() {
             serviceViewModel = activeService?.let { MyViewModel(it) }
             setContent {
                 MyApp(context = this@MainActivity)
-                //ProfileScreen(context = this@MainActivity, activeService = aService, serviceViewModel!!)
             }
         }
         override fun onServiceDisconnected(arg0: ComponentName) {
@@ -145,7 +144,6 @@ class MainActivity : ComponentActivity() {
             }
         }
         nfcManager = NFCManager(this)
-//        mapView = MapView(this)
     }
     companion object {
         private var isMapKitInitialized = false
@@ -185,15 +183,6 @@ class MainActivity : ComponentActivity() {
             isBound = false
         }
         Log.d(TAG, "onStop main activity")
-        val serviceIntent = Intent(this, BackgroundServiceLocation::class.java)
-        // Проверяем версию Android перед запуском сервиса
-        if (!BackgroundServiceLocation.isServiceRunning) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(serviceIntent)
-            } else {
-                startService(serviceIntent)
-            }
-        }
     }
 
     override fun onDestroy() {
@@ -213,13 +202,12 @@ class MainActivity : ComponentActivity() {
     }
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        // Убедитесь, что Intent относится к NFC
         if (NfcAdapter.ACTION_NDEF_DISCOVERED == intent.action ||
             NfcAdapter.ACTION_TECH_DISCOVERED == intent.action ||
             NfcAdapter.ACTION_TAG_DISCOVERED == intent.action) {
             // Обновляем Intent в Compose
             setContent {
-                Scanner(nfcIntent = intent, context = this)
+                Scanner(nfcIntent = intent, context = this, aService!!, serviceViewModel!!)
             }
         }
     }
@@ -238,7 +226,7 @@ fun MyApp(context: Context) {
             when (selectedTab) {
                 0 -> ProfileScreen(context, aService, serviceViewModel!!)
                 1 -> MapScreen(context, aService!!, serviceViewModel!!)
-                2 -> Scanner(null, context)
+                2 -> Scanner(null, context, aService!!, serviceViewModel!!)
             }
         }
     }
@@ -248,19 +236,37 @@ fun MyApp(context: Context) {
 fun BottomNavigationBar(selectedTab: Int, onTabSelected: (Int) -> Unit) {
     NavigationBar {
         NavigationBarItem(
-            icon = { Icon(ImageVector.vectorResource(id = androidx.core.R.drawable.ic_call_answer), contentDescription = "Home") },
+            icon = {
+                Icon(
+                    painter = painterResource(id = R.drawable.smart_home),
+                    contentDescription = "Smart Home",
+                    modifier = Modifier.size(24.dp) // по нужному вам размеру
+                )
+            },
             selected = selectedTab == 0,
             onClick = { onTabSelected(0) },
-            label = { Text("Home") }
+            label = { Text("Профиль") }
         )
         NavigationBarItem(
-            icon = { Icon(ImageVector.vectorResource(id = androidx.core.R.drawable.ic_call_answer), contentDescription = "Search") },
+            icon = {
+                Icon(
+                    painter = painterResource(id = R.drawable.map),
+                    contentDescription = "Map",
+                    modifier = Modifier.size(24.dp) // по нужному вам размеру
+                )
+            },
             selected = selectedTab == 1,
             onClick = { onTabSelected(1) },
-            label = { Text("Map") }
+            label = { Text("Карта") }
         )
         NavigationBarItem(
-            icon = { Icon(ImageVector.vectorResource(id = androidx.core.R.drawable.ic_call_decline), contentDescription = "Profile") },
+            icon = {
+                Icon(
+                    painter = painterResource(id = R.drawable.scaner),
+                    contentDescription = "Scaner",
+                    modifier = Modifier.size(24.dp)
+                )
+            },
             selected = selectedTab == 2,
             onClick = { onTabSelected(2) },
             label = { Text("Сканер") }

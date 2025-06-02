@@ -68,7 +68,6 @@ import androidx.compose.ui.unit.dp
 import com.example.diplom.InfoAboutUser
 import com.example.diplom.InfoPeopleOnMap
 import com.example.diplom.MyViewModel
-import com.example.diplom.viewModel
 import kotlinx.coroutines.launch
 
  private val TAG = "MapScreen"

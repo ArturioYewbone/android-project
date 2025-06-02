@@ -7,7 +7,7 @@ import java.util.*
 
 fun generateQRCode(content: String, size: Int): Bitmap? {
     return try {
-        // Настройки для кодировки (например, UTF-8)
+        // Настройки для кодировки
         val hints = Hashtable<EncodeHintType, String>()
         hints[EncodeHintType.CHARACTER_SET] = "UTF-8"
 

@@ -38,7 +38,6 @@ import org.json.JSONObject
 
 private val TAG = "LoginActivity"
 var activeService: ActiveService? = null
-var viewModel: MyViewModel? = null
 private var isBound = false
 private var loginUser:String = ""
 
@@ -48,9 +47,8 @@ class LoginActivity : ComponentActivity() {
             Log.d(TAG, "onReceive called with action: ${intent.action}")
             when (intent.action) {
                 "ACTION_CONNECTION_SUCCESS" -> {
-                    // Соединение успешно, выполните нужные действия
+                    // Соединение успешно
                     Log.d(TAG, "Connection successfully established.")
-                    // Например, можно обновить UI или перейти на другой экран
                     runOnUiThread{
                         setContent {
                             WelcomeScreen()
@@ -58,35 +56,26 @@ class LoginActivity : ComponentActivity() {
                     }
                 }
                 "ACTION_CONNECTION_FAILED" -> {
-                    // Соединение не удалось, выполните нужные действия
+                    // Соединение не удалось
                     val errorMessage = intent.getStringExtra("error_message") ?: "Unknown error"
                     Log.d(TAG, "Connection failed: $errorMessage")
-                    // Можно показать диалог или уведомить пользователя другим способом
                     runOnUiThread{
                         setContent{
                             Log.d(TAG, "create dialog menu")
                             RetryDialog(
                                 errorMessage = errorMessage,
                                 onRetry = {
-                                    // Retry logic, such as restarting the service
                                     val intent = Intent(this@LoginActivity, ActiveService::class.java)
-                                    //if (ActiveService.isRunning) {
-                                     //   Log.d(TAG, "при нажатии на повтор сервис работает")
-                                    //    stopService(intent)
-                                    //}
                                     startService(intent)
                                 },
                                 onCancel = {
                                     // Handle cancel action
-                                    // For example, finish the activity
-                                    //if (ActiveService.isRunning) {
                                         Log.d(TAG, "при нажатии на отмену сервис работает")
                                         val intent = Intent(
                                             this@LoginActivity,
                                             ActiveService::class.java
                                         )
                                         stopService(intent)
-                                   // }
                                     finish()
                                 }
                             )
@@ -100,7 +89,6 @@ class LoginActivity : ComponentActivity() {
             }
         }
     }
-
 
     data class ServerResponse(
         val message: String?,
@@ -117,9 +105,6 @@ class LoginActivity : ComponentActivity() {
                     try {
                         val jsonObject = JSONObject(status)
                         val stat = jsonObject.getString("status")
-                        //val dataArray = jsonObject.getJSONArray("status")
-                        //val userData = dataArray.getJSONObject(0)
-                        //val state = userData.getString("status")
                         Log.d(TAG, "stat-$stat")
                         val serverResponse = Gson().fromJson(status, ServerResponse::class.java)
                         if (stat == "error") {
@@ -132,7 +117,6 @@ class LoginActivity : ComponentActivity() {
                             ).show()
                         } else if (stat == "success") {
                             // Успешный вход или регистрация
-                            //Toast.makeText(this@LoginActivity, "Успех: ${serverResponse.message}", Toast.LENGTH_SHORT).show()
                             activeService?.sendCommandFromActivity("SELECT user_id FROM myusers WHERE login = '$loginUser';", "", null)
                             val intent = Intent(this@LoginActivity, MainActivity::class.java)
 
@@ -141,7 +125,6 @@ class LoginActivity : ComponentActivity() {
                             lifecycleScope.coroutineContext.cancelChildren()
                         } else {
                             // Неизвестный статус
-                            var errorMessage = "Неизвестный ответ от сервера"
                             Toast.makeText(
                                 this@LoginActivity,
                                 "Неизвестный статус: ${serverResponse.status}",
@@ -150,7 +133,6 @@ class LoginActivity : ComponentActivity() {
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "Ошибка парсинга JSON: ${e.message}")
-                        var errorMessage = "Ошибка обработки ответа сервера"
                     }
                 }
             }
@@ -168,7 +150,6 @@ class LoginActivity : ComponentActivity() {
         }
         val serviceIntent = Intent(this, BackgroundServiceLocation::class.java)
         stopService(serviceIntent)
-        //WorkManager.getInstance(this).cancelUniqueWork("OfflineWorker")
     }
 
     override fun onStart() {
@@ -199,11 +180,6 @@ class LoginActivity : ComponentActivity() {
         val intent = Intent(this, ActiveService::class.java)
         stopService(intent)
     }
-
-    override fun onDestroy() {
-        super.onDestroy()
-
-    }
 }
 
 @Composable
@@ -220,11 +196,10 @@ fun WelcomeScreen() {
         modifier = Modifier.fillMaxSize()
     ) {
         Text(
-            text = "Добро пожаловать",
+            text = "Добро пожаловать в ReviewHub",
             fontSize = 24.sp,
             modifier = Modifier.padding(bottom = 16.dp)
         )
-
         if (isRegistering) {
             OutlinedTextField(
                 value = name,
@@ -328,7 +303,6 @@ fun RetryDialog(
     if (openDialog.value) {
         AlertDialog(
             onDismissRequest = {
-                // Handle the dialog dismissal
                 openDialog.value = false
             },
             title = {
@@ -388,7 +362,6 @@ fun RequestLocationPermissionsScreen() {
             }
         }
     }
-
 
     if (!permissionGranted.value) {
         // Запрашиваем разрешение на передний план

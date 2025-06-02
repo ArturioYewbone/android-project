@@ -7,6 +7,8 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
@@ -25,12 +27,11 @@ data class InfoPeopleOnMap(
 )
 data class InfoAboutUser(
     val username: String?,
-    val last_login: String?
+    val last_login: String?,
+    val average_rating: Float
 )
 class MyViewModel(private val activeService: ActiveService) : ViewModel() {
     private val TAG = "MyViewModel"
-    //private val _reviewsFlow = MutableStateFlow<List<Review>>(emptyList())
-    //val reviewsFlow: StateFlow<List<Review>> = _reviewsFlow
     private val _reviewsFlow = MutableStateFlow<List<Review>>(emptyList())
     val reviewsFlow: StateFlow<List<Review>> = _reviewsFlow
     private val _reviewsFlow5 = MutableStateFlow<List<Review>>(emptyList())
@@ -39,6 +40,8 @@ class MyViewModel(private val activeService: ActiveService) : ViewModel() {
     val reviewsFlow5From: StateFlow<List<Review>> = _reviewsFlow5From
     private val _infoPeopleOnMap = MutableStateFlow<List<InfoPeopleOnMap>>(emptyList())
     val infoPeopleOnMap: StateFlow<List<InfoPeopleOnMap>> = _infoPeopleOnMap
+    private val _avatars = MutableStateFlow<Map<Int, ByteArray?>>(emptyMap())
+    val avatars: StateFlow<Map<Int, ByteArray?>> = _avatars.asStateFlow()
 
     private val _avgRating = MutableStateFlow<Float>(0f)
     val avgRating: StateFlow<Float> = _avgRating
@@ -49,14 +52,14 @@ class MyViewModel(private val activeService: ActiveService) : ViewModel() {
     private val _isLoadingInfo = MutableStateFlow(false)
     val isLoadingInfo: StateFlow<Boolean> = _isLoadingInfo
 
-    private val _infoAboutUser = MutableStateFlow<InfoAboutUser>(InfoAboutUser(null, null))
+    private val _infoAboutUser = MutableStateFlow<InfoAboutUser>(InfoAboutUser(null, null, 0f))
     val infoAboutUser: StateFlow<InfoAboutUser> = _infoAboutUser
 
-    // Запрашиваем все отзывы (пример)
+    // Запрос на все отзывы
     fun fetchAllReviews() {
         Log.d(TAG, "запрос на все отзывы")
         _isLoading.value = true
-        // Твой SQL-запрос (можно менять как нужно)
+        //  SQL-запрос
         val query = """
             SELECT r.rating, 
                    r.review, 
@@ -74,25 +77,27 @@ class MyViewModel(private val activeService: ActiveService) : ViewModel() {
         Log.d(TAG, "запрос на всех пользователей для карты")
         _isLoading.value = true
         val query = """
-        WITH user_location AS (
-            SELECT latitude, longitude, visibility
-            FROM myusers
-            WHERE user_id = ${activeService.idUser})
-        SELECT DISTINCT u.user_id, u.username, u.latitude, u.longitude, u.last_login
+        WITH user_location AS (SELECT
+        latitude,
+        longitude,
+        visibility
+        FROM myusers
+        WHERE user_id = ${activeService.idUser}) SELECT
+        u.user_id,
+        u.username,
+        u.latitude,
+        u.longitude,
+        u.last_login
         FROM myusers u
-        LEFT JOIN friends f ON (u.user_id = f.friend_id OR u.user_id = f.user_id)
-        WHERE 
-            u.user_id <> ${activeService.idUser}
-            AND (((SELECT visibility FROM user_location) = TRUE
-                    AND u.visibility = TRUE
-                    AND (6371 * acos(cos(radians((SELECT latitude FROM user_location))) 
-                            * cos(radians(u.latitude)) 
-                            * cos(radians(u.longitude) - radians((SELECT longitude FROM user_location))) 
-                            + sin(radians((SELECT latitude FROM user_location))) 
-                            * sin(radians(u.latitude)))) * 1000 <= 1000)         
-                OR ((SELECT visibility FROM user_location) = FALSE
-                    AND (f.user_id = ${activeService.idUser} OR f.friend_id = ${activeService.idUser})
-                ));
+        CROSS JOIN user_location ul
+        WHERE    u.user_id <> ${activeService.idUser}    AND ul.visibility = TRUE
+        AND u.visibility = TRUE
+        AND (6371 * acos(
+            cos(radians(ul.latitude)) *
+            cos(radians(u.latitude)) *
+            cos(radians(u.longitude) - radians(ul.longitude)) +
+            sin(radians(ul.latitude)) *
+            sin(radians(u.latitude)))) * 1000 <= 1000;
         """.trimIndent()
         sendCommand(query, "getPeopleOnMap")
     }
@@ -101,9 +106,16 @@ class MyViewModel(private val activeService: ActiveService) : ViewModel() {
         Log.d(TAG, "запрос на получение инфо по пользавателю")
         _isLoadingInfo.value = true
         val query = """
-        select username, last_login
-        from myusers 
-        where user_id = $idUser;
+        SELECT
+          u.username,
+          u.last_login,
+          (
+            SELECT AVG(r.rating)
+            FROM ratings r
+            WHERE r.myuser_id = u.user_id
+          ) AS average_rating
+        FROM myusers u
+        WHERE u.user_id = $idUser;
         """.trimIndent()
         sendCommand(query, "getInfoAboutUser")
     }
@@ -182,6 +194,7 @@ class MyViewModel(private val activeService: ActiveService) : ViewModel() {
                                 _infoPeopleOnMap.value = reviews
                                 Log.d(TAG, "получено в виде списка: $reviews")
                             }
+                            setPeopleOnMap(reviews)
                         }
                         "getInfoAboutUser"->{
                             if (data.length() > 0) {
@@ -193,12 +206,6 @@ class MyViewModel(private val activeService: ActiveService) : ViewModel() {
                             } else {
                                 Log.e(TAG, "Data array is empty")
                             }
-//                            val listType = object : TypeToken<InfoAboutUser>() {}.type
-//                            val reviews: InfoAboutUser = Gson().fromJson(data, listType)
-//
-//                            _infoAboutUser.value = reviews
-                            //Log.d(TAG, "получено в виде списка: $reviews")
-
                         }
                         "avg_rating"->{
                             val avg = data.getJSONObject(0).getDouble("average_rating").toFloat()
@@ -214,6 +221,20 @@ class MyViewModel(private val activeService: ActiveService) : ViewModel() {
                     _isLoading.value = false
                     _isLoadingInfo.value = false
                     Log.d(TAG, "Loading finished")
+                }
+            }
+        }
+    }
+    fun setPeopleOnMap(list: List<InfoPeopleOnMap>) {
+        // сразу запускаем загрузку аватарок
+        viewModelScope.launch {
+            list.forEach { person ->
+                try {
+                    val bytes = activeService.downloadAvatar(person.user_id)
+                    // добавляем в мапу id→bytes
+                    _avatars.value = _avatars.value + (person.user_id to bytes)
+                } catch (e: Exception) {
+                    Log.d(TAG, "avatar load failed for ${person.user_id}", e)
                 }
             }
         }

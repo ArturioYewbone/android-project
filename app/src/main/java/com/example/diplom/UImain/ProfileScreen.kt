@@ -64,6 +64,10 @@ import com.example.diplom.*
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarHalf
 import androidx.compose.material.icons.filled.StarBorder
+import coil.request.CachePolicy
+import coil.request.ImageRequest
+import kotlinx.coroutines.delay
+import java.io.File
 
 private val TAG = "ProfileScreen"
 @Composable
@@ -75,13 +79,15 @@ fun ProfileScreen(context: Context, activeService: ActiveService?, viewModel: My
     val reviewsFrom by viewModel.reviewsFlow5From.collectAsState()
     val rating by viewModel.avgRating.collectAsState()
     LaunchedEffect(Unit) {
+        if (activeService?.idUser == 0){
+            delay(500L)
+        }
         viewModel.sendCommand(
             "SELECT AVG(rating) AS average_rating FROM ratings WHERE myuser_id = ${activeService?.idUser};",
             "avg_rating"
         )
     }
     LaunchedEffect(rating) {
-        // например, guard чтобы не запускать на initial 0f
         if (rating > 0f) {
             viewModel.sendCommand(
                 "SELECT r.rating, r.review, r.review_date, u.username AS reviewer_name " +
@@ -118,41 +124,12 @@ fun ProfileScreen(context: Context, activeService: ActiveService?, viewModel: My
             verticalAlignment = Alignment.CenterVertically
         ) {
             ProfilePhotoPicker(context, activeService!!, viewModel, modifier = Modifier)
-//            Box(
-//                modifier = Modifier
-//                    .size(240.dp)
-//                    .weight(1f)
-//                    .border(
-//                        BorderStroke(2.dp, Color.Gray),
-//                        shape = CircleShape
-//                    )
-//
-//                    .clip(CircleShape)
-//                    .clickable {
-//                        // Загрузка фото
-//                        hasPhoto = true
-//                    },
-//                contentAlignment = Alignment.Center
-//            ) {
-//                if (hasPhoto) {
-//                    AsyncImage(
-//                        model = "https://yandex-images.clstorage.net/100H3bC16/f85172BwRKm5/JPmvU9pjeoYluQ7XILd3e0EZNrsE_PIY98Vz9f4BvdadMwHvPVXfA1FBYtw3rwLo2EclQheCwoAKdbwh8SEtmQCNa2fbto_SBH26F1AnNo_wzba_dTnSqYZ1BmGbhHhjzTWnXQpS7LSyVqDrIGuXaA0S9NPmhrE222L8VgQUaduGmS7yz4CKZYJaP5chhFadkKgmncR5IvhyNHchvNXPxCslRE2a8vwHEZTTGpIZpdtsI7WGF2TgFB_Qv0RH1qnIFKnO058SmlWDeu6Gg6XEPqGI9102m5DKwteGUCy2rOS4RrYOGgAfBqB0kanCuTZo3EOEVVbFsYe_I4xWx5ZLSiWJDSHM4VtmA0p8FvAlx1wxm4cvBgmA2IB0RoOflIw0OGQXnorDraZjx7Bp4gh0-74TpcY3Z7JWTlOM5SeWemgkiW4SzLE4R1BoPicAFaV-g3sm34YpMAhiViWSPLbvBJsmRy4q4ewUo5di-BJbJbtO0Bb0J7bTt6xALCa3JSpZVcnswv_DybUzawy3E8WE3qFaVTz2OlP4ADelIu1GrJZZdRTPmlIdVLJWQ9sgGOY6_xBkVjXl8ha_kj5kRTaay2UrbINuMMtlYjncZdPFpJ3zC6SNhOuTmhBmNgEOJF6UuXZ3rIiiXkSBhyEI4-qnqP-AFDZnFpJ3HABt18R2CHnkK30wvKFYl3ML3bTCBXSMsQh3nMYqoSiDJUWQbQcfFhpGBm1aMp1WwOYhGZHrNfpMUtQHRMcChjzi7OQXxGi6tSvuQX4Q6ZXAyA40goRH7uHpd-2EmhC581RUge2WXDS7lmQOSlL9Z9MmYIlziEQorHOX9Gdn0_d8E55kRIQ6abTZPkIMI5mVMDoMlZN19b2w6Cb9Veky-6CEZNJ_l61UCibm3HsyLjYgdOHqkyiny-xCdwY1JvKVrmPvN7WmyAin293iXYNKpyAq_HaSFmfeM-nEvGdYAirxRfZhM", // URL фото
-//                        contentDescription = "Profile Photo",
-//                        modifier = Modifier.fillMaxSize(),
-//                        contentScale = ContentScale.Crop
-//                    )
-//                } else {
-//                    Text("Загрузить фото", fontSize = 14.sp, color = Color.Gray)
-//                }
-//            }
-
             Column(
                 modifier = Modifier
                     .weight(1f)
                     .padding(start = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-
                 TextButton(
                     onClick = { isFullScreenRepost = true },
                     modifier = Modifier
@@ -212,9 +189,7 @@ fun ProfileScreen(context: Context, activeService: ActiveService?, viewModel: My
         val intent = Intent(context, ScreenRepost::class.java)
         context.startActivity(intent)
         isFullScreenRepost = false
-
     }
-
 }
 @Composable
 fun ProfilePhotoPicker(
@@ -225,61 +200,69 @@ fun ProfilePhotoPicker(
 ) {
     // SharedPrefs для хранения URI загруженной фотографии
     val prefs = remember { context.getSharedPreferences("profile_prefs", MODE_PRIVATE) }
-    // Сохраняем строку URI
-    var photoUriString by remember { mutableStateOf(prefs.getString("photo_uri", "") ?: "") }
-    val photoUri: Uri? = photoUriString.takeIf { it.isNotBlank() }?.let { Uri.parse(it) }
 
     // Диалог «Заменить фото»
     var showReplaceDialog by remember { mutableStateOf(false) }
+
+    var photoPath by remember { mutableStateOf(prefs.getString("photo_path", null)) }
+    val photoFile = photoPath?.let { File(it) }
 
     // Лаунчер для выбора изображения
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let {
+            // копируем в filesDir
+            val dest = File(context.filesDir, "profile.jpg")
+            context.contentResolver.openInputStream(it)?.use { input ->
+                dest.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            // сохраняем путь
+            prefs.edit().putString("photo_path", dest.absolutePath).apply()
+            // сброс
+            photoPath = null
+            // присвоение нового
+            photoPath = dest.absolutePath
+
             // Читаем байты
             val photoBytes: ByteArray? = context.contentResolver.openInputStream(it)
                 ?.use { it.readBytes() }
             photoBytes?.let { bytes ->
-                // Отправляем "сырые" байты в ваш сервис
-                //activeService.sendPhoto(bytes)
+                // Отправляем "сырые" байты в сервис
                 Log.d(TAG, "Send photo")
                 val previewDec = bytes.take(5).joinToString(", ")
                 Log.d(TAG, "First 5 bytes (dec): [$previewDec]")
                 activeService.sendCommandFromActivity("", "send_avatar", bytes)
-//            val bytes = context.contentResolver.openInputStream(it)?.use { stream ->
-//                stream.readBytes()
-//            }
-//            if (bytes != null) {
-//                // Кодируем в base64
-//                val base64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
-//                // Отправляем SQL-запрос на сервер: обновляем поле avatar_data
-//                activeService.sendCommandFromActivity(base64, "send_avatar")
-//            }
             }
         }
     }
 
-    // Сам бокс
     Box(
         modifier = modifier
             .size(200.dp)  // квадрат
             .border(BorderStroke(2.dp, Color.Gray), shape = RoundedCornerShape(8.dp))
             .clip(RoundedCornerShape(8.dp))
             .clickable {
-                if (photoUri == null) {
-                    // первый раз — сразу открыть проводник
-                    launcher.launch("image/*")
-                } else {
+                if (photoFile?.exists() == true) {
                     // уже есть фото — предложить заменить
                     showReplaceDialog = true
+                } else {
+                    // первый раз — сразу открыть проводник
+                    launcher.launch("image/*")
+
                 }
             },
         contentAlignment = Alignment.Center
     ) {
-        if (photoUri != null) {
+        if (photoFile != null && photoFile.exists()) {
             AsyncImage(
-                model = photoUri,
+                model = ImageRequest.Builder(context)
+                    .data(photoFile)
+                    .memoryCachePolicy(CachePolicy.DISABLED)
+                    .diskCachePolicy(CachePolicy.DISABLED)
+                    .build(),
                 contentDescription = "Profile Photo",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
@@ -311,15 +294,9 @@ fun ProfilePhotoPicker(
         )
     }
 }
-data class UploadAvatarRequest(
-    val command: String = "upload_avatar",
-    val userId: Int,
-    val avatarBase64: String
-)
-
 @Composable
 fun RatingStars(rating: Float, modifier: Modifier = Modifier) {
-    // Подсчитываем, сколько целых звёзд и нужен ли «полузвук»:
+    // Подсчитываем, сколько целых звёзд и нужен ли «полузвезда»:
     val fullStars = rating.toInt().coerceIn(0, 5)
     val hasPartialStar = ((rating - fullStars) >= 0.01f) && (fullStars < 5)
     val emptyStars = 5 - fullStars - if (hasPartialStar) 1 else 0
@@ -564,7 +541,7 @@ fun ReviewItem(name: String, rating: Int, date: String, text: String) {
     }
 }
 
-// Твой enum для разных типов сортировки
+//enum для разных типов сортировки
 enum class SortType {
     DATE_DESC,  // Сначала новые
     DATE_ASC,   // Сначала старые

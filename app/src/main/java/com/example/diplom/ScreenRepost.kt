@@ -76,7 +76,7 @@ fun FullScreenRepost(onClose: () -> Unit) {
             )
         }
         "qrCode" -> {
-            QrCodeScreen(onBackClick = { currentScreen = "mainRepost" }, onClose = onClose)
+            QrCodeScreen(onBackClick = { currentScreen = "mainRepost" }, onClose = onClose, activeService!!)
         }
         "nfc" -> {
             NfcScreen(onBackClick = { currentScreen = "mainRepost" }, onClose = onClose)
@@ -152,8 +152,8 @@ fun LinkScreen(onBackClick: () -> Unit, onClose: () -> Unit) {
 }
 
 @Composable
-fun QrCodeScreen(onBackClick: () -> Unit, onClose: () -> Unit) {
-    var qrBitmap: Bitmap? = generateQRCode("1", 500)
+fun QrCodeScreen(onBackClick: () -> Unit, onClose: () -> Unit, activeService: ActiveService ) {
+    var qrBitmap: Bitmap? = generateQRCode(activeService.idUser.toString(), 500)
     Column(
         modifier = Modifier
             .fillMaxSize()

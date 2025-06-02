@@ -12,8 +12,7 @@ class TextHostApduService : HostApduService() {
     override fun processCommandApdu(commandApdu: ByteArray, extras: Bundle?): ByteArray {
         // Обрабатываем входящий APDU запрос от другого NFC устройства
 
-        // Здесь можно добавить логику обработки APDU-запросов
-        // Например, проверка команды SELECT AID или другое
+        // Здесь можно логик обработки APDU-запросов
 
         // Конвертируем текст в байтовый массив и возвращаем его как ответ
         val response = textToSend.toByteArray(Charsets.UTF_8)

@@ -18,13 +18,13 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.ui.unit.dp
 import org.w3c.dom.Text
-
+private val TAG = "ScannigProfile"
 class ScannigProfile : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Log.d("ddw", "Open Scanning activity")
+        Log.d(TAG, "Open Scanning activity")
         val scannedData = intent.getStringExtra("text") ?: ""
-        Log.d("ddw", scannedData)
+        Log.d(TAG, scannedData)
         setContent {
             openProfile(scannedData)
         }
