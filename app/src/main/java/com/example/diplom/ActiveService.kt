@@ -38,8 +38,8 @@ class ActiveService : Service() {
 
     private var dataOut: DataOutputStream? = null
     private var dataIn: DataInputStream? = null
-    private val serverIp = "62.60.150.199"//"82.179.140.18"  // Замените на ваш IP
-    private val serverPort = 44015  // Замените на ваш порт
+    private val serverIp = "94.228.165.72"//"82.179.140.18" //"62.60.150.199"  // Замените на ваш IP
+    private val serverPort = 44021  // Замените на ваш порт
     private var lastKnownLocation: Point? = null
     private val executor = Executors.newSingleThreadScheduledExecutor()
     private val coroutineScope = CoroutineScope(Dispatchers.Default)

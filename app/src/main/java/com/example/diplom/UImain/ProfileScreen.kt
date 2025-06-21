@@ -409,7 +409,7 @@ fun ReviewsDialog(
     LaunchedEffect(Unit) {
         if (!isLoading) {
             Log.d("ReviewsDialog", "Fetching reviews...")
-            viewModel.fetchAllReviews()
+            viewModel.fetchAllReviews(0)
         }
     }
 
@@ -428,15 +428,16 @@ fun ReviewsDialog(
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().padding(8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
+
                 ) {
                     Text(
                         text = "Все отзывы",
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(bottom = 16.dp)
+                        //modifier = Modifier.padding(bottom = 16.dp)
                     )
 
                     IconButton(onClick = onDismiss) {
@@ -452,7 +453,7 @@ fun ReviewsDialog(
                     sortType = newSortType
                 })
 
-                Spacer(modifier = Modifier.height(8.dp))
+                //Spacer(modifier = Modifier.height(8.dp))
 
                 if (isLoading) {
                     Box(
@@ -494,19 +495,19 @@ fun ReviewItem(name: String, rating: Int, date: String, text: String) {
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
-            .background(Color.LightGray, shape = RoundedCornerShape(8.dp))
+            //.background(Color.LightGray, shape = RoundedCornerShape(8.dp))
             .padding(16.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Image(
-                painter = painterResource(id = android.R.drawable.ic_menu_camera),
-                contentDescription = "User Photo",
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-            )
+//            Image(
+//                painter = painterResource(id = android.R.drawable.ic_menu_camera),
+//                contentDescription = "User Photo",
+//                modifier = Modifier
+//                    .size(40.dp)
+//                    .clip(CircleShape)
+//            )
 
-            Spacer(modifier = Modifier.width(8.dp))
+//            Spacer(modifier = Modifier.width(8.dp))
 
             Column {
                 androidx.compose.material3.Text(text = name, fontWeight = FontWeight.Bold)
@@ -514,7 +515,7 @@ fun ReviewItem(name: String, rating: Int, date: String, text: String) {
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+//        Spacer(modifier = Modifier.height(8.dp))
 
         Row {
             repeat(rating) {
@@ -576,7 +577,8 @@ fun FiltersRow(
                 onFilterChange(newSort)
             },
             colors = ButtonDefaults.buttonColors(
-                backgroundColor = if (sortType == SortType.DATE_DESC || sortType == SortType.DATE_ASC) Color.Gray else Color.LightGray
+                backgroundColor = Color(0xFF6200EE),
+                contentColor = Color.White
             )
         ) {
             Text(dateLabel)
@@ -592,7 +594,8 @@ fun FiltersRow(
                 onFilterChange(newSort)
             },
             colors = ButtonDefaults.buttonColors(
-                backgroundColor = if (sortType == SortType.RATING_DESC || sortType == SortType.RATING_ASC) Color.Gray else Color.LightGray
+                backgroundColor = Color(0xFF6200EE),
+                contentColor = Color.White
             )
         ) {
             Text(ratingLabel)

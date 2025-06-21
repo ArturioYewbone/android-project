@@ -7,10 +7,19 @@
 #include <iomanip>
 #include <nlohmann/json.hpp>
 #include "libpq-fe.h"
-//g++ -std=c++11 -g -Wall -I/usr/local/include/pgsql -I/home/mpi/pin2106/SorokinEvgeny/libs -o server server.cpp -lpq -lcurl
+#include <filesystem>
+#include <fstream>
+#include <atomic>
+#include <csignal>
+//g++ -std=c++11 -g -Wall -I/usr/local/include/pgsql -I/home/mpi/pin2106/SorokinEvgeny/libs -o server3 server3.cpp -lpq -lcurl
 
 using json = nlohmann::json;
 #define PORT 44021
+std::atomic<bool> keepRunning{true};
+// Сигнальный обработчик для SIGINT
+void handleSigint(int) {
+    keepRunning = false;
+}
 
 // Функция для получения текущего времени в формате HH:MM:SS
 std::string getCurrentTime() {
@@ -21,6 +30,35 @@ std::string getCurrentTime() {
     std::ostringstream oss;
     oss << std::put_time(&tm, "%H:%M:%S");
     return oss.str();
+}
+// Читает ровно count байт из sock в buf или бросает исключение
+void readFully(int sock, void* buf, size_t count){
+char* ptr = static_cast<char*>(buf);
+    size_t remaining = count;
+    while (remaining > 0) {
+if (!keepRunning) {
+            std::cout << "Interrupted by SIGINT, aborting readFully\n";
+            throw std::runtime_error("Interrupted by SIGINT");
+        }
+        ssize_t r = read(sock, ptr, remaining);
+        if (r < 0) {
+            if (errno == EINTR) {
+                // если это прерывание по сигналу и мы уже получили SIGINT
+                if (!keepRunning) {
+                    std::cout << "Interrupted by SIGINT during read, aborting\n";
+                    throw std::runtime_error("Interrupted by SIGINT");
+                }
+                // иначе просто повторяем чтение
+                continue;
+            }
+            throw std::runtime_error(std::string("Ошибка чтения из сокета: ") + std::strerror(errno));
+        }
+        if (r == 0) {
+            throw std::runtime_error("Клиент закрыл соединение досрочно");
+        }
+        ptr += r;
+        remaining -= r;
+    }
 }
 
 // Метод для выполнения SQL-запроса и получения результатов
@@ -70,7 +108,7 @@ json executeSQLQuery(const std::string& query, bool isLogin, const std::string& 
             result_json["status"] = "error";
             result_json["message"] = "Логин не найден";
         } else if (rows == 1) {
-      // Логин найден, проверяем пароль
+            // Логин найден, проверяем пароль
             std::string stored_password = PQgetvalue(res, 0, 0);  // Пароль из базы данных
         //     std::cout << "stored_password: [" << stored_password << "] (length: " << stored_password.length() << ") "
         //   << "password: [" << password << "] (length: " << password.length() << ")\n";
@@ -108,18 +146,18 @@ json executeSQLQuery(const std::string& query, bool isLogin, const std::string& 
         // Получаем статус выполненной команды
         std::string command_tag = PQcmdStatus(res);
         // Если это INSERT, UPDATE или DELETE, подтверждаем успешное выполнение и завершаем функцию
-        if (command_tag.find("INSERT") != std::string::npos ||
-            command_tag.find("UPDATE") != std::string::npos ||
+        if (command_tag.find("INSERT") != std::string::npos || 
+            command_tag.find("UPDATE") != std::string::npos || 
             command_tag.find("DELETE") != std::string::npos) {
-
+            
             std::cout << "SQL выполнен успешно: " << command_tag << std::endl;
-
+            
             PQclear(res);
             return {{"status", "success"}, {"message", "SQL query executed successfully"}, {"command", command_tag}};
         }
         int rows = PQntuples(res);
         int cols = PQnfields(res);
-
+        
         json data_json;
         for (int i = 0; i < rows; ++i) {
             json row_json;
@@ -139,7 +177,10 @@ json executeSQLQuery(const std::string& query, bool isLogin, const std::string& 
     return result_json;
 }
 
+
 int main() {
+std::signal(SIGPIPE, SIG_IGN);
+std::signal(SIGINT, handleSigint);
     int server_fd, new_sock;
     struct sockaddr_in address;
     char buffer[1024] = {0};
@@ -169,10 +210,11 @@ int main() {
     std::cout << "Ожидание подключения клиента...\n";
 
     // Бесконечный цикл для работы с клиентами
-    while (true) {
+    while (keepRunning) {
         // Принимаем подключение от клиента
         if ((new_sock = accept(server_fd, NULL, NULL)) < 0) {
-            perror("Ошибка при принятии подключения");
+	    if (errno == EINTR && !keepRunning) break;
+	    perror("Ошибка при принятии подключения");
             continue; // Если не удалось принять подключение, пробуем снова
         }
 
@@ -180,51 +222,123 @@ int main() {
 
         // Чтение данных от клиента
         int valread;
-        while ((valread = read(new_sock, buffer, 1024)) > 0) {
-            // Парсинг JSON из полученных данных
-            try {
-                json received_json = json::parse(buffer);
+       try {
+		while(keepRunning){
+    // 1) читаем 4 байта — длину JSON-заголовка
+    uint32_t netHeaderLen;
+    readFully(new_sock, &netHeaderLen, sizeof(netHeaderLen));
+    uint32_t headerLen = ntohl(netHeaderLen);
 
-                std::string command_type = received_json["type"];
-                std::string typeSql = received_json["typeSql"];
-                std::string command = received_json["command"];
+    // 2) читаем ровно headerLen байт JSON
+    std::vector<char> headerBuf(headerLen);
+    readFully(new_sock, headerBuf.data(), headerLen);
 
-                std::cout << "[" << getCurrentTime() << "] Получено сообщение: "
-                          << "Тип команды: " << command_type << "\nТип SQL: "<< typeSql << "\nКоманда: " << command << "\n";
+std::string hdrStr(headerBuf.begin(), headerBuf.end());
+    std::cout << "[" << getCurrentTime() << "] Raw JSON header: "
+              << hdrStr << "\n";    
+auto received_json = nlohmann::json::parse(hdrStr);
 
-                json response_json;
+    std::string command_type = received_json["type"];
+    json response_json;
+    if (command_type == "upload_avatar") {
+        // 3) из JSON берём user_id и размер картинки
+        int userId    = received_json["user_id"];
+        int photoSize = received_json["size"];
 
-                if (command_type == "sql"|| command_type == "sql_login") {
-                    bool isLogin = false;
-                    if(command_type == "sql_login"){isLogin = true;}
-                    // Если тип команды "sql", выполняем запрос
-                    response_json = executeSQLQuery(command, isLogin, typeSql);
-                }
-else if (command == "upload_avatar") {}
+        // 4) читаем ровно photoSize байт «сырых» данных
+        std::vector<unsigned char> img_data(photoSize);
+        readFully(new_sock, img_data.data(), photoSize);
 
- else {
-                    // Для остальных типов команд отправляем статус
-                    response_json["status"] = "received";
-                    response_json["command_type"] = command_type;
-                    response_json["command"] = command;
-                }
+        // 5) сохраняем в папку ./photos/{userId}.jpg
+        std::filesystem::create_directories("photos");
+        std::filesystem::path filePath = std::filesystem::path("photos")
+                                        / (std::to_string(userId) + ".jpg");
+        std::ofstream ofs(filePath, std::ios::binary);
+        if (!ofs) throw std::runtime_error("Не удалось открыть файл для записи");
+        ofs.write(reinterpret_cast<char*>(img_data.data()), photoSize);
+        ofs.close();
 
-                // Преобразование обратно в строку
-                std::string response_str = response_json.dump()+"\n";
-                std::cout << "Ответ клиенту: "<< response_str;
-                // Отправка ответа клиенту
-                send(new_sock, response_str.c_str(), response_str.length(), 0);
+        // 6) отвечаем клиенту JSON-ответом
+        json resp = {
+            {"status", "ok"},
+            {"path", filePath.string()}
+        };
+        auto s = resp.dump();
+        uint32_t n = htonl(s.size());
+        // шлём длину + тело
+        send(new_sock, &n, sizeof(n), 0);
+        send(new_sock, s.data(), s.size(), 0);
+    }else if (command_type == "download_avatar") {
+    int userId = received_json["user_id"];
+    // путь к файлу
+    auto path = std::filesystem::path("photos") /
+                (std::to_string(userId) + ".jpg");
+    // читаем файл целиком
+    std::ifstream ifs(path, std::ios::binary | std::ios::ate);
+    if (!ifs) {
+        response_json = {
+            {"status", "error"},
+            {"message", "File not found"}
+        };
+    } else {
+        auto size = ifs.tellg();
+        ifs.seekg(0);
+        std::vector<unsigned char> buf(size);
+        ifs.read(reinterpret_cast<char*>(buf.data()), size);
 
-            } catch (const json::parse_error& e) {
-                std::cerr << "Ошибка парсинга JSON: " << e.what() << "\n";
+        // 1) сначала отправляем JSON-заголовок со size
+        response_json = {
+            {"status", "ok"},
+            {"size", (int)size}
+        };
+        std::string hdr = response_json.dump();
+        uint32_t n = htonl(hdr.size());
+        send(new_sock, &n, sizeof(n), 0);
+        send(new_sock, hdr.data(), hdr.size(), 0);
+
+        // 2) а потом сами байты
+        send(new_sock, buf.data(), size, 0);
+        // перейдём к следующему client.read в цикле
+        continue;
+    }
+}
+    else {
+std::string typeSql = received_json.value("typeSql", "");
+            std::string command = received_json.value("command", "");
+
+            if (command_type == "sql" || command_type == "sql_login") {
+                bool isLogin = (command_type == "sql_login");
+                response_json = executeSQLQuery(command, isLogin, typeSql);
+            } else {
+                response_json = {
+                    {"status", "received"},
+                    {"command_type", command_type},
+                    {"command", command}
+                };
             }
-
-            memset(buffer, 0, sizeof(buffer));  // Очистка буфера
         }
 
-        if (valread == 0) {
-            std::cout << "[" << getCurrentTime() << "] Клиент отключился.\n\n\n\n\n\n\n";
-        }
+        // 7) шлём ответ в том же формате: [4-байта длины][JSON UTF-8]
+        std::string respStr = response_json.dump();
+std::cout << "[" << getCurrentTime() << "] Sending response JSON: "
+                      << respStr << std::endl;
+        uint32_t netRespLen = htonl(static_cast<uint32_t>(respStr.size()));
+        send(new_sock, &netRespLen, sizeof(netRespLen), 0);
+        send(new_sock, respStr.data(), respStr.size(), 0);
+        // … обработка других типов команд …
+    }
+}
+catch (const std::exception& ex) {
+    json err = {{"status","error"},{"message",ex.what()}};
+    auto s = err.dump();
+    uint32_t n = htonl(s.size());
+    send(new_sock, &n, sizeof(n), 0);
+    send(new_sock, s.data(), s.size(), 0);
+}
+
+       
+            std::cout << "[" << getCurrentTime() << "] Клиент отключился.\n\n";
+        
 
         // Закрытие соединения с клиентом
         close(new_sock);

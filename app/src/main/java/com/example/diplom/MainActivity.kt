@@ -22,6 +22,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.RequiresApi
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
@@ -103,6 +104,7 @@ class MainActivity : ComponentActivity() {
     private var isBound = false
 
     private val connection = object : ServiceConnection {
+        @RequiresApi(Build.VERSION_CODES.O)
         override fun onServiceConnected(className: ComponentName, service: IBinder) {
             Log.d(TAG,"service connect")
             val binder = service as ActiveService.MyBinder
@@ -176,13 +178,25 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
-        super.onStop()
+
         MapKitFactory.getInstance().onStop()
         if (isBound) {
             unbindService(connection)
             isBound = false
         }
+        stopService(Intent(this, ActiveService::class.java))
+        //MapKitFactory.getInstance().onStop()
+        val serviceIntent = Intent(this, BackgroundServiceLocation::class.java)
+        // Проверяем версию Android перед запуском сервиса
+        if (!BackgroundServiceLocation.isServiceRunning) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent)
+            } else {
+                startService(serviceIntent)
+            }
+        }
         Log.d(TAG, "onStop main activity")
+        super.onStop()
     }
 
     override fun onDestroy() {
@@ -213,6 +227,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun MyApp(context: Context) {
     var selectedTab by remember { mutableStateOf(0) }

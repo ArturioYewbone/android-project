@@ -239,7 +239,9 @@ fun QRCodeScannerView(
             },
             onSendReview = { reviewText, rating ->
                 viewModel.sendingReview(reviewText, rating, id)
-            }
+            },
+            viewModel = viewModel,
+            selectedUser = 0
         )
     }
 }

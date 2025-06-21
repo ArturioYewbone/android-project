@@ -78,10 +78,21 @@ import com.example.diplom.MyViewModel
 import com.yandex.mapkit.MapKitFactory
 import kotlinx.coroutines.launch
 import android.net.Uri
+import android.os.Build
 import android.util.TypedValue
+import androidx.annotation.RequiresApi
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.ui.text.style.TextAlign
 import java.io.File
+import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.format.DateTimeFormatter
 
 private val TAG = "MapScreen"
+@RequiresApi(Build.VERSION_CODES.O)
 @SuppressLint("CommitPrefEdits")
 @Composable
 fun MapScreen(context:Context, activeService: ActiveService, viewModel: MyViewModel) {
@@ -92,6 +103,17 @@ fun MapScreen(context:Context, activeService: ActiveService, viewModel: MyViewMo
     var userId by remember { mutableStateOf<Int>(0)}
 
     val mapView = remember { MapView(context) }
+    DisposableEffect(mapView) {
+        // Запустить MapKit
+        MapKitFactory.getInstance().onStart()
+        mapView.onStart()
+
+        onDispose {
+            // Остановить MapKit
+            mapView.onStop()
+            MapKitFactory.getInstance().onStop()
+        }
+    }
 
     val p: Point? = sharedPreferences.getString("latitude", "54.467784")
         ?.let { Point(it.toDouble(), sharedPreferences.getString("longtude", "64.796943")!!.toDouble()) }
@@ -134,99 +156,100 @@ fun MapScreen(context:Context, activeService: ActiveService, viewModel: MyViewMo
         }
     }
     LaunchedEffect(infoOnMap, avatars) {
-        val mapObjects = mapView.mapWindow.map.mapObjects
-        mapObjects.clear()
+        Log.d(TAG, "LaunchedEffect(infoOnMap, avatars)")
+        //val mapObjects = mapView.mapWindow.map.mapObjects
+        //mapObjects.clear()
 
-        val ctx = mapView.context
-        val prefs = ctx.getSharedPreferences("profile_prefs", MODE_PRIVATE)
-        val photoPath = prefs.getString("photo_path", null)
-
-        val iconDp = 48f
-        val iconPx = TypedValue.applyDimension(
-            TypedValue.COMPLEX_UNIT_DIP,
-            iconDp,
-            ctx.resources.displayMetrics
-        ).toInt()
+//        val ctx = mapView.context
+//        val prefs = ctx.getSharedPreferences("profile_prefs", MODE_PRIVATE)
+//        val photoPath = prefs.getString("photo_path", null)
+//
+//        val iconDp = 48f
+//        val iconPx = TypedValue.applyDimension(
+//            TypedValue.COMPLEX_UNIT_DIP,
+//            iconDp,
+//            ctx.resources.displayMetrics
+//        ).toInt()
 
         // Выбираем ImageProvider: либо из Bitmap по URI, либо дефолтный ресурс
-        val imageProvider = if (!photoPath.isNullOrBlank()) {
-            // загружаем Bitmap из файла
-            val file = File(photoPath)
-            val originalBmp: Bitmap? = if (file.exists()) {
-                BitmapFactory.decodeFile(file.absolutePath)
-            } else null
-
-            val scaledBmp: Bitmap? = originalBmp?.let { bmp ->
-                Bitmap.createScaledBitmap(bmp, iconPx, iconPx, true)
-            }
-
-            if (scaledBmp != null) {
-                ImageProvider.fromBitmap(scaledBmp)
-            } else {
-                ImageProvider.fromResource(ctx, R.drawable.empty_people2)
-            }
-        } else {
-            ImageProvider.fromResource(ctx, R.drawable.empty_people2)
-        }
+//        val imageProvider = if (!photoPath.isNullOrBlank()) {
+//            // загружаем Bitmap из файла
+//            val file = File(photoPath)
+//            val originalBmp: Bitmap? = if (file.exists()) {
+//                BitmapFactory.decodeFile(file.absolutePath)
+//            } else null
+//
+//            val scaledBmp: Bitmap? = originalBmp?.let { bmp ->
+//                Bitmap.createScaledBitmap(bmp, iconPx, iconPx, true)
+//            }
+//
+//            if (scaledBmp != null) {
+//                ImageProvider.fromBitmap(scaledBmp)
+//            } else {
+//                ImageProvider.fromResource(ctx, R.drawable.empty_people2)
+//            }
+//        } else {
+//            ImageProvider.fromResource(ctx, R.drawable.empty_people2)
+//        }
 
         // Если местоположение уже есть, сразу перемещаем карту
-        if (userLocation != null) {
-            Log.d(TAG, "userlocation not null")
-            userLocation?.let {
-                mapView.mapWindow.getMap().move(
-                    CameraPosition(it, 16.0f, 0.0f, 0.0f),
-                    Animation(Animation.Type.SMOOTH, 1f), // Smooth animation
-                    null
-                )
-                placemark =
-                    mapView.mapWindow.map.mapObjects.addPlacemark().apply {
-                        geometry = it
-                        setIcon(imageProvider)
-                    }
-            }
-        } else {
-            Log.d(TAG, "Местоположение не получено переход к targetPoint")
-            targetPoint?.let { CameraPosition(it, 14.0f, 0.0f, 0.0f) }?.let {
-                mapView.mapWindow.getMap().move(
-                    it,
-                    Animation(Animation.Type.SMOOTH, 2f),
-                    null
-                )
-            }
-        }
-        infoOnMap.forEach { user ->
-            val loc = Point(user.latitude, user.longitude)
-            Log.d(TAG,"user найден рядом: ${user.username} at ${user.latitude}, ${user.longitude}, ${user.user_id}")
-
-            // 1) Пытаемся достать байты из avatars
-            val bmpProvider = avatars[user.user_id]?.let { bytes ->
-                // если байты есть — декодируем в Bitmap
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                    ?.let { bmp ->
-                        // масштабируем под нужный размер
-                        val iconDp = 48f
-                        val iconPx = TypedValue.applyDimension(
-                            TypedValue.COMPLEX_UNIT_DIP,
-                            iconDp,
-                            mapView.context.resources.displayMetrics
-                        ).toInt()
-                        val scaled = Bitmap.createScaledBitmap(bmp, iconPx, iconPx, true)
-                        ImageProvider.fromBitmap(scaled)
-                    }
-            }
-            // 2) либо дефолтная иконка
-            val imageProvider = bmpProvider
-                ?: ImageProvider.fromResource(mapView.context, R.drawable.empty_people2)
-
-            // 3) добавляем маркер
-            mapObjects.addPlacemark(loc, imageProvider).apply {
-                isDraggable = true
-                setIconStyle(IconStyle().apply { scale = 2f })
-                addTapListener { _, _ ->
-                    onMarkerClick(user)
-                }
-            }
-        }
+//        if (userLocation != null) {
+//            Log.d(TAG, "userlocation not null")
+//            userLocation?.let {
+//                mapView.mapWindow.getMap().move(
+//                    CameraPosition(it, 16.0f, 0.0f, 0.0f),
+//                    Animation(Animation.Type.SMOOTH, 1f), // Smooth animation
+//                    null
+//                )
+//                placemark =
+//                    mapView.mapWindow.map.mapObjects.addPlacemark().apply {
+//                        geometry = it
+//                        setIcon(imageProvider)
+//                    }
+//            }
+//        } else {
+//            Log.d(TAG, "Местоположение не получено переход к targetPoint")
+//            targetPoint?.let { CameraPosition(it, 14.0f, 0.0f, 0.0f) }?.let {
+//                mapView.mapWindow.getMap().move(
+//                    it,
+//                    Animation(Animation.Type.SMOOTH, 2f),
+//                    null
+//                )
+//            }
+//        }
+//        infoOnMap.forEach { user ->
+//            val loc = Point(user.latitude, user.longitude)
+//            Log.d(TAG,"user найден рядом: ${user.username} at ${user.latitude}, ${user.longitude}, ${user.user_id}")
+//
+//            // 1) Пытаемся достать байты из avatars
+//            val bmpProvider = avatars[user.user_id]?.let { bytes ->
+//                // если байты есть — декодируем в Bitmap
+//                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+//                    ?.let { bmp ->
+//                        // масштабируем под нужный размер
+//                        val iconDp = 48f
+//                        val iconPx = TypedValue.applyDimension(
+//                            TypedValue.COMPLEX_UNIT_DIP,
+//                            iconDp,
+//                            mapView.context.resources.displayMetrics
+//                        ).toInt()
+//                        val scaled = Bitmap.createScaledBitmap(bmp, iconPx, iconPx, true)
+//                        ImageProvider.fromBitmap(scaled)
+//                    }
+//            }
+//            // 2) либо дефолтная иконка
+//            val imageProvider = bmpProvider
+//                ?: ImageProvider.fromResource(mapView.context, R.drawable.empty_people2)
+//
+//            // 3) добавляем маркер
+//            mapObjects.addPlacemark(loc, imageProvider).apply {
+//                isDraggable = true
+//                setIconStyle(IconStyle().apply { scale = 2f })
+//                addTapListener { _, _ ->
+//                    onMarkerClick(user)
+//                }
+//            }
+//        }
     }
     val info by viewModel.infoAboutUser.collectAsState()
     var showSheet by remember { mutableStateOf(false) }
@@ -242,19 +265,114 @@ fun MapScreen(context:Context, activeService: ActiveService, viewModel: MyViewMo
         Box(modifier = Modifier.fillMaxSize()) {
             AndroidView(
                 factory = { mapView },
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+                update = {view ->
+                    val mapObjects = view.mapWindow.map.mapObjects
+                    mapObjects.clear()
+                    val ctx = mapView.context
+                    val prefs = ctx.getSharedPreferences("profile_prefs", MODE_PRIVATE)
+                    val photoPath = prefs.getString("photo_path", null)
+
+                    val iconDp = 48f
+                    val iconPx = TypedValue.applyDimension(
+                        TypedValue.COMPLEX_UNIT_DIP,
+                        iconDp,
+                        ctx.resources.displayMetrics
+                    ).toInt()
+                    val imageProvider = if (!photoPath.isNullOrBlank()) {
+                        // загружаем Bitmap из файла
+                        val file = File(photoPath)
+                        val originalBmp: Bitmap? = if (file.exists()) {
+                            BitmapFactory.decodeFile(file.absolutePath)
+                        } else null
+
+                        val scaledBmp: Bitmap? = originalBmp?.let { bmp ->
+                            Bitmap.createScaledBitmap(bmp, iconPx, iconPx, true)
+                        }
+
+                        if (scaledBmp != null) {
+                            ImageProvider.fromBitmap(scaledBmp)
+                        } else {
+                            ImageProvider.fromResource(ctx, R.drawable.empty_people2)
+                        }
+                    } else {
+                        ImageProvider.fromResource(ctx, R.drawable.empty_people2)
+                    }
+                    if (userLocation != null) {
+                        Log.d(TAG, "userlocation not null")
+                        userLocation?.let {
+                            mapView.mapWindow.getMap().move(
+                                CameraPosition(it, 16.0f, 0.0f, 0.0f),
+                                Animation(Animation.Type.SMOOTH, 1f), // Smooth animation
+                                null
+                            )
+                            placemark =
+                                mapView.mapWindow.map.mapObjects.addPlacemark().apply {
+                                    geometry = it
+                                    setIcon(imageProvider)
+                                }
+                        }
+                    } else {
+                        Log.d(TAG, "Местоположение не получено переход к targetPoint")
+                        targetPoint?.let { CameraPosition(it, 14.0f, 0.0f, 0.0f) }?.let {
+                            mapView.mapWindow.getMap().move(
+                                it,
+                                Animation(Animation.Type.SMOOTH, 2f),
+                                null
+                            )
+                        }
+                    }
+                    infoOnMap.forEach { user ->
+
+                        val loc = Point(user.latitude, user.longitude)
+                        Log.d(TAG,"user найден рядом: ${user.username} at ${user.latitude}, ${user.longitude}, ${user.user_id}")
+
+                        // 1) Пытаемся достать байты из avatars
+                        val bmpProvider = avatars[user.user_id]?.let { bytes ->
+                            // если байты есть — декодируем в Bitmap
+                            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                                ?.let { bmp ->
+                                    // масштабируем под нужный размер
+                                    val iconDp = 48f
+                                    val iconPx = TypedValue.applyDimension(
+                                        TypedValue.COMPLEX_UNIT_DIP,
+                                        iconDp,
+                                        mapView.context.resources.displayMetrics
+                                    ).toInt()
+                                    val scaled = Bitmap.createScaledBitmap(bmp, iconPx, iconPx, true)
+                                    ImageProvider.fromBitmap(scaled)
+                                }
+                        }
+                        // 2) либо дефолтная иконка
+                        val imageProvider = bmpProvider
+                            ?: ImageProvider.fromResource(mapView.context, R.drawable.empty_people2)
+
+                        // 3) добавляем маркер
+                        mapObjects.addPlacemark(loc, imageProvider).apply {
+                            isDraggable = true
+                            setIconStyle(IconStyle().apply { scale = 2f })
+                            addTapListener { _, _ ->
+                                onMarkerClick(user)
+                            }
+                        }
+                    }
+                }
             )
             // Вызываем `Dialog`, если showDialog == true
-            if (showDialog) {
+            if (showDialog  && selectedUser != null) {
                 UserInfoDialog(
                     info = info,
-                    onDismiss = { showDialog = false },
+                    onDismiss = { showDialog   = false
+                        selectedUser = null },
                     onSendReview = { reviewText, rating ->
                         Log.d(TAG, "Отзыв отправлен: $rating\n$reviewText")
                         viewModel.sendingReview(reviewText, rating, userId)
                     },
-                    activeService
+                    activeService,
+                    viewModel,
+                    selectedUser = selectedUser!!
                 )
+
             }
 
             // Ползунок в правом верхнем углу
@@ -262,7 +380,19 @@ fun MapScreen(context:Context, activeService: ActiveService, viewModel: MyViewMo
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(16.dp)
+                    .border(
+                        BorderStroke(1.dp, Color(0xFF6200EE)),
+                        shape = RoundedCornerShape(8.dp)
+                    ),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
+                Text(
+                    text = "Публичный\nрежим",                    // на две строки
+                    fontSize = 14.sp,
+                    textAlign = TextAlign.Center,                // по центру внутри Text
+                    modifier = Modifier
+                        .padding(end = 8.dp, start = 8.dp)
+                )
                 Switch(
                     checked = isPublic,
                     onCheckedChange = { newValue ->
@@ -323,14 +453,18 @@ fun MapScreen(context:Context, activeService: ActiveService, viewModel: MyViewMo
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun UserInfoDialog(
     info: InfoAboutUser,
     onDismiss: () -> Unit,
     onSendReview: (String, Int) -> Unit,
-    activeService: ActiveService
+    activeService: ActiveService,
+    viewModel: MyViewModel,
+    selectedUser: Int
 ) {
     var showReviewField by remember { mutableStateOf(false) }
+    var showReviews by remember { mutableStateOf(false) }
     var reviewText by remember { mutableStateOf("") }
     var rating by remember { mutableStateOf(0) }
 
@@ -348,18 +482,51 @@ fun UserInfoDialog(
     val canLeaveReview = elapsed >= halfHourMillis
     // сколько ещё (в минутах) ждать
     val minutesLeft = ((halfHourMillis - elapsed) / 60000).coerceAtLeast(0)
+    val reviews by viewModel.reviewsFlow.collectAsState(initial = emptyList())
+
+
 
     Dialog(onDismissRequest = onDismiss) {
         Box(
             modifier = Modifier
-                .size(300.dp)
+                .wrapContentHeight()
+                .wrapContentWidth()
                 .background(Color.White, shape = RoundedCornerShape(16.dp))
                 .padding(16.dp),
             contentAlignment = Alignment.Center
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("Информация о пользователе", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                Text(text = info.toString(), modifier = Modifier.padding(vertical = 8.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = "${info.username}",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.Filled.Star,
+                        contentDescription = "Средняя оценка",
+                        tint = Color(0xFFFFD700), // золотой
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = String.format("%.1f", info.average_rating),
+                        fontSize = 16.sp
+                    )
+                }
+
+
+                Text(
+                    text = "Последний вход: ${info.last_login}",
+                    fontSize = 14.sp,
+                    color = Color.Gray
+                )
+
 
                 if (showReviewField) {
                     var isReviewEmpty by remember { mutableStateOf(false) }
@@ -373,8 +540,10 @@ fun UserInfoDialog(
                                 tint = if (i <= rating) Color.Yellow else Color.Gray, // Закрашиваем выбранные
                                 modifier = Modifier
                                     .size(32.dp)
-                                    .clickable { rating = i
-                                        isRatingEmpty = false} // Запоминаем выбранный рейтинг
+                                    .clickable {
+                                        rating = i
+                                        isRatingEmpty = false
+                                    } // Запоминаем выбранный рейтинг
                             )
                         }
                     }
@@ -410,6 +579,7 @@ fun UserInfoDialog(
                     }
                 } else {
                     Column (horizontalAlignment = Alignment.CenterHorizontally){
+
                         Button(
                             onClick = { showReviewField = true },
                             enabled = canLeaveReview
@@ -423,6 +593,82 @@ fun UserInfoDialog(
                                 modifier = Modifier.padding(top = 8.dp)
                             )
                         }
+                        Button(onClick = {
+                            showReviews = !showReviews
+                            Log.d(TAG, "showReviews = ${showReviews}")
+                            viewModel.fetchAllReviews(selectedUser)
+                        }) {
+                            if (showReviews){Text(text = "Свернуть")}
+                            else{Text(text = "Просмотреть отзывы")}
+
+                        }
+                    }
+                }
+                // список отзывов
+                if (showReviews) {
+
+                    val isLoadingInfo by viewModel.isLoadingInfo.collectAsState()
+                    when {
+                        isLoadingInfo -> {
+                            Text(
+                                text = "Загрузка...",
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 16.dp),
+                                textAlign = TextAlign.Center
+                            )
+                        }
+
+                        reviews.isEmpty() -> {
+                            Text(
+                                text = "Отзывов нет",
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 16.dp),
+                                textAlign = TextAlign.Center
+                            )
+                        }
+
+                        else -> {
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 200.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(reviews) { rev ->
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth()
+                                            .background(Color(0xFFF5F5F5), RoundedCornerShape(8.dp))
+                                            .padding(8.dp)
+                                    ) {
+                                        Text(rev.reviewer_name, fontWeight = FontWeight.Bold)
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                Icons.Filled.Star,
+                                                contentDescription = null,
+                                                tint = Color(0xFFFFD700),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(Modifier.width(4.dp))
+                                            Text(rev.rating.toString(), fontSize = 14.sp)
+                                            Spacer(Modifier.weight(1f))
+                                            Text(
+                                                rev.review_date,
+                                                fontSize = 12.sp,
+                                                color = Color.Gray
+                                            )
+                                        }
+                                        rev.review?.let {
+                                            Text(
+                                                it,
+                                                modifier = Modifier.padding(top = 4.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -433,58 +679,4 @@ fun UserInfoDialog(
             }
         }
     }
-}
-@Composable
-fun ReviewButton(
-    activeService: ActiveService,
-    showReviewField: Boolean,
-    onShowReviewFieldChange: (Boolean) -> Unit
-) {
-    val context = LocalContext.current
-    val prefs = remember {
-        context.getSharedPreferences("AppPrefs", Context.MODE_PRIVATE)
-    }
-    val lastEnableTimeKey = "lastEnableTime_${activeService.idUser}"
-    val lastEnableTime = prefs.getLong(lastEnableTimeKey, 0L)
-
-    // 30 минут в миллисекундах
-    val halfHourMillis = 30 * 60 * 1000L
-    // сколько прошло с момента включения
-    val elapsed = System.currentTimeMillis() - lastEnableTime
-    // можно ли оставить отзыв
-    val canLeaveReview = elapsed >= halfHourMillis
-    // сколько осталось ждать (в минутах)
-    val minutesLeft = ((halfHourMillis - elapsed) / 60000).coerceAtLeast(0)
-
-    Column {
-        Button(
-            onClick = {
-                onShowReviewFieldChange(true)
-            },
-            enabled = canLeaveReview
-        ) {
-            Text("Оставить отзыв")
-        }
-
-        if (!canLeaveReview) {
-            Text(
-                text = "Еще не прошло 30 минут с момента включения. Подождите $minutesLeft мин.",
-                color = Color.Red,
-                modifier = Modifier
-                    .padding(top = 8.dp)
-            )
-        }
-    }
-}
-@Composable
-fun MarkerInfoSheet(idUser: Int?, viewModel: MyViewModel, data: InfoAboutUser) {
-    Log.d(TAG, "open MarkerInfoSheet")
-
-    Spacer(modifier = Modifier.padding(20.dp))
-    Text(text = data.toString())
-
-
-    Spacer(modifier = Modifier.padding(20.dp))
-    Spacer(modifier = Modifier.padding(20.dp))
-
 }

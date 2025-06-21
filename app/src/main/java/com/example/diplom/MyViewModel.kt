@@ -56,9 +56,11 @@ class MyViewModel(private val activeService: ActiveService) : ViewModel() {
     val infoAboutUser: StateFlow<InfoAboutUser> = _infoAboutUser
 
     // Запрос на все отзывы
-    fun fetchAllReviews() {
+    fun fetchAllReviews(idT: Int) {
+        val id = if(idT != 0) idT else activeService.idUser
         Log.d(TAG, "запрос на все отзывы")
-        _isLoading.value = true
+        //_isLoading.value = true
+        _isLoadingInfo.value = true
         //  SQL-запрос
         val query = """
             SELECT r.rating, 
@@ -67,7 +69,7 @@ class MyViewModel(private val activeService: ActiveService) : ViewModel() {
                    u.username AS reviewer_name 
             FROM ratings r 
             JOIN myusers u ON r.reviewer_myuser_id = u.user_id
-            WHERE r.myuser_id = ${activeService.idUser}
+            WHERE r.myuser_id = $id
             ORDER BY r.review_date DESC
         """.trimIndent()
         sendCommand(query, "allReviews")
@@ -120,6 +122,7 @@ class MyViewModel(private val activeService: ActiveService) : ViewModel() {
         sendCommand(query, "getInfoAboutUser")
     }
     fun sendingReview(review: String, rating:Int, user_id:Int){
+        _isLoadingInfo.value = true
         val cmd="""
             INSERT INTO ratings (rating, review, review_date, reviewer_myuser_id, myuser_id)
             VALUES (${rating}, '${review}', CURRENT_TIMESTAMP, ${activeService.idUser}, ${user_id});
